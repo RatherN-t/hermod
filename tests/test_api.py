@@ -9,7 +9,16 @@ from hermod.adherence.rules import evaluate_patient
 from hermod.agent.agent import handle_inbound
 from hermod.channels.base import IncomingMessage
 from hermod.config import get_settings
-from hermod.db.models import DoseEvent, DoseStatus, Flag, FlagSeverity, Medication
+from hermod.db.models import (
+    AgentTrace,
+    DoseEvent,
+    DoseStatus,
+    Flag,
+    FlagSeverity,
+    Medication,
+    Message,
+    Prescription,
+)
 from hermod.llm.client import LLMResult
 from hermod.main import app
 from hermod.timeutil import local_tz, utcnow
@@ -142,6 +151,53 @@ def test_pause_resume_retime_and_end(api, session):
     assert api.get("/api/reminders/999").status_code == 404
 
 
+def test_patch_changes_course_length_keeping_past_doses(api, session):
+    p = make_patient(api)
+    r = make_reminder(api, p["id"], durationDays=7)
+    past = DoseEvent(medication_id=r["id"], patient_id=p["id"], status=DoseStatus.TAKEN,
+                     scheduled_for=utcnow() - timedelta(hours=1))
+    session.add(past)
+    session.commit()
+
+    def doses():
+        session.expire_all()
+        return session.exec(select(DoseEvent).where(DoseEvent.medication_id == r["id"])).all()
+
+    def last_day(rem):
+        return datetime.fromisoformat(rem["endDate"]).astimezone(local_tz()).date()
+
+    start_day = datetime.fromisoformat(r["startDate"]).astimezone(local_tz()).date()
+    longer = api.patch(f"/api/reminders/{r['id']}", json={"durationDays": 10}).json()
+    assert longer["durationDays"] == 10 and last_day(longer) == start_day + timedelta(days=9)
+    assert longer["totalDoses"] > r["totalDoses"]
+    future = [e for e in doses() if e.scheduled_for > utcnow()]
+    assert max(e.scheduled_for for e in future).astimezone(local_tz()).date() == last_day(longer)
+
+    until = start_day + timedelta(days=2)
+    by_date = api.patch(f"/api/reminders/{r['id']}",
+                        json={"durationKind": "date", "untilDate": until.isoformat()}).json()
+    assert by_date["durationKind"] == "date" and by_date["durationDays"] is None
+    assert last_day(by_date) == until
+    assert all(e.scheduled_for.astimezone(local_tz()).date() <= until for e in doses()
+               if e.scheduled_for > utcnow())
+    assert any(e.id == past.id and e.status == DoseStatus.TAKEN for e in doses())
+
+    appt = (utcnow() + timedelta(days=4)).isoformat()
+    assert api.patch(f"/api/reminders/{r['id']}",
+                     json={"durationKind": "appointment"}).status_code == 422
+    api.patch(f"/api/patients/{p['id']}", json={"nextAppointmentAt": appt})
+    by_appt = api.patch(f"/api/reminders/{r['id']}", json={"durationKind": "appointment"}).json()
+    assert by_appt["durationKind"] == "appointment" and by_appt["endDate"][:16] == appt[:16]
+
+    # Paused reminders keep no upcoming doses after a length change.
+    api.patch(f"/api/reminders/{r['id']}", json={"status": "paused"})
+    api.patch(f"/api/reminders/{r['id']}", json={"durationKind": "days", "durationDays": 5})
+    assert [e for e in doses() if e.scheduled_for > utcnow()] == []
+    for bad in ({"durationKind": "date"}, {"durationDays": 0},
+                {"durationKind": "date", "untilDate": "2020-01-01"}):
+        assert api.patch(f"/api/reminders/{r['id']}", json=bad).status_code == 422, bad
+
+
 def test_checkin_now_uses_custom_message(api, channel):
     p = make_patient(api, name="Sam Taylor")
     r = make_reminder(api, p["id"], customMessage="Hey {name}, time for {medication} ({dose})")
@@ -201,6 +257,34 @@ async def test_messages_link_to_traces(api, patient, llm, anyio_backend):
     detail = api.get(f"/api/traces/{reply['traceIds'][0]}").json()
     assert detail["prompt"][0]["role"] == "system" and detail["messageId"] == msgs[0]["id"]
     assert api.get("/api/traces/999").status_code == 404
+
+
+async def test_delete_patient_removes_everything(api, patient, llm, session, anyio_backend):
+    llm(LLMResult(text="", tool_calls=[{"id": "c1", "name": "log_dose",
+                                         "arguments": {"medication": "Amoxicillin",
+                                                       "status": "taken"}}]),
+        LLMResult(text="Logged, thanks!"))
+    await handle_inbound(IncomingMessage(sender_id=patient.phone, text="took it",
+                                         message_id="m1"))
+    make_reminder(api, patient.id, name="Ibuprofen 200mg")
+    session.add(Flag(patient_id=patient.id, kind="side_effect", severity=FlagSeverity.INFO,
+                     summary="I feel nauseous"))
+    session.commit()
+    other = make_patient(api, name="Alex Kim", phone="61400000002")
+    make_reminder(api, other["id"])
+    pid = patient.id
+    assert api.get(f"/api/patients/{pid}/messages").json()
+
+    assert api.delete(f"/api/patients/{pid}").status_code == 204
+    assert api.get(f"/api/patients/{pid}").status_code == 404
+    assert api.delete(f"/api/patients/{pid}").status_code == 404
+    session.expire_all()
+    for model in (DoseEvent, Flag, Message, AgentTrace, Prescription):
+        assert session.exec(select(model).where(model.patient_id == pid)).all() == []
+    assert session.exec(select(Medication).where(Medication.name == "Ibuprofen 200mg")).all() == []
+    # The other patient is untouched.
+    assert [p["name"] for p in api.get("/api/patients").json()] == ["Alex Kim"]
+    assert len(api.get(f"/api/patients/{other['id']}/reminders").json()) == 1
 
 
 # --- flags and dashboard -------------------------------------------------------------------
@@ -274,3 +358,35 @@ def test_custom_message_placeholders_cannot_reach_attributes(api, channel):
                       customMessage="{name.__class__} {name} {unknown} {{x}} {medication}")
     api.post(f"/api/reminders/{r['id']}/checkin")
     assert channel.sent[-1]["text"] == "{name.__class__} Sam {unknown} {{x}} Amoxicillin 500mg"
+
+
+def test_demo_clinic_seed(api):
+    if not get_settings().database_url.startswith("sqlite"):
+        pytest.skip("seed-clinic is SQLite-only")
+    from hermod.demo_clinic import clinic, remove_clinic, seed_clinic
+
+    keep = make_patient(api, name="Real Test", phone="61400000009")
+    seed_clinic()
+    patients = {p["name"]: p for p in api.get("/api/patients").json()}
+    assert len(patients) == len(clinic()) + 1
+    assert all(p["isSynthetic"] for p in patients.values())
+    assert all(p.phone.startswith("614915") for p in clinic())  # ACMA fiction numbers
+    eleanor = patients["Eleanor Mitchell"]["adherence"]
+    assert (eleanor["taken"], eleanor["missed"], eleanor["pending"]) == (18, 3, 0)
+    assert patients["Grace Chen"]["activeReminders"] == 0
+    assert patients["Daniel Brooks"]["adherence"]["adherencePct"] == 100
+    with pytest.raises(SystemExit):
+        seed_clinic()  # already seeded, no --reset
+    remove_clinic()  # only the demo patients go
+    assert [p["id"] for p in api.get("/api/patients").json()] == [keep["id"]]
+
+
+def test_demo_clinic_refuses_shared_db_without_flag(monkeypatch):
+    from hermod.demo_clinic import _check_target
+
+    _check_target("sqlite:///x.db", shared=False, reset=True)
+    with pytest.raises(SystemExit):
+        _check_target("postgresql://h/db", shared=False, reset=False)
+    with pytest.raises(SystemExit):
+        _check_target("postgresql://h/db", shared=True, reset=True)  # never drop shared tables
+    _check_target("postgresql://h/db", shared=True, reset=False)

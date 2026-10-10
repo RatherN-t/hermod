@@ -142,6 +142,10 @@ class ReminderUpdate(Schema):
                                        description='Send "" to go back to the standard message')
     alert_on_missed: bool | None = None
     max_daily_doses: int | None = Field(default=None, ge=1, le=24)
+    duration_kind: DurationKind | None = Field(
+        default=None, description="Change the course length; counted from the course start")
+    duration_days: int | None = Field(default=None, ge=1, le=180)
+    until_date: date | None = Field(default=None, description="Last day, for durationKind=date")
 
     @field_validator("times_of_day")
     @classmethod

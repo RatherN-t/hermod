@@ -3,6 +3,8 @@
     python -m hermod.demo seed --phone 61400000000      # synthetic patient + antibiotic course
     python -m hermod.demo link --phone 61400000000      # print their Telegram start link
     CHANNEL=console python -m hermod.demo chat --phone 61400000000
+    DATABASE_URL=sqlite:///./hermod-dev.db python -m hermod.demo seed-clinic --reset
+                                                         # 8 patients with history (SQLite only)
 
 In chat, type as the patient. `/checkin` fires a check-in for any due doses, `/flags` lists
 flags, `/quit` exits.
@@ -101,10 +103,26 @@ async def chat(phone: str) -> None:
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("cmd", choices=["seed", "chat", "link"])
-    ap.add_argument("--phone", required=True, help="digits only, e.g. 61400000000 (the patient's id)")
+    ap.add_argument("cmd", choices=["seed", "chat", "link", "seed-clinic"])
+    ap.add_argument("--phone", help="digits only, e.g. 61400000000 (the patient's id)")
     ap.add_argument("--name", default="Sam Taylor")
+    ap.add_argument("--reset", action="store_true",
+                    help="seed-clinic: drop all tables first (SQLite only)")
+    ap.add_argument("--shared", action="store_true",
+                    help="seed-clinic: allow writing to a non-SQLite (shared) database")
+    ap.add_argument("--remove", action="store_true",
+                    help="seed-clinic: delete the demo clinic's patients instead of adding them")
     a = ap.parse_args()
+    if a.cmd == "seed-clinic":
+        from hermod.demo_clinic import remove_clinic, seed_clinic
+
+        if a.remove:
+            remove_clinic(shared=a.shared)
+        else:
+            seed_clinic(reset=a.reset, shared=a.shared)
+        return
+    if not a.phone:
+        ap.error("--phone is required")
     if a.cmd == "seed":
         seed(a.phone, a.name)
     elif a.cmd == "link":

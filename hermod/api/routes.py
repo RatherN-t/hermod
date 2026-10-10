@@ -8,6 +8,7 @@ from datetime import date, datetime, time, timedelta
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
+from sqlalchemy import delete, update
 from sqlmodel import Session, col, select
 
 from hermod.api import schemas as S
@@ -27,7 +28,7 @@ from hermod.db.models import (
 )
 from hermod.db.session import get_session
 from hermod.scheduler.jobs import schedule_course
-from hermod.timeutil import local_tz, to_utc, utcnow
+from hermod.timeutil import local_tz, to_local, to_utc, utcnow
 
 
 def require_api_key(x_api_key: Annotated[str | None, Header()] = None) -> None:
@@ -131,6 +132,30 @@ async def update_patient(patient_id: int, body: S.PatientUpdate, s: DB):
     return await V.patient_detail(s, p)
 
 
+@router.delete("/patients/{patient_id}", status_code=204, tags=["patients"])
+def delete_patient(patient_id: int, s: DB) -> None:
+    """Permanently delete a patient and everything about them: reminders, doses, messages,
+    agent traces and flags. Can't be undone; the dashboard asks for confirmation first."""
+    delete_patient_rows(s, _patient(s, patient_id))
+    s.commit()
+
+
+def delete_patient_rows(s: Session, p: Patient) -> None:
+    """Delete a patient and all their rows (no commit)."""
+    msgs = select(Message.id).where(Message.patient_id == p.id)
+    rxs = select(Prescription.id).where(Prescription.patient_id == p.id)
+    # Children before parents, so foreign keys hold on Postgres.
+    s.execute(delete(AgentTrace).where(
+        (AgentTrace.patient_id == p.id) | col(AgentTrace.message_id).in_(msgs)))
+    s.execute(delete(Flag).where(Flag.patient_id == p.id))
+    s.execute(delete(DoseEvent).where(DoseEvent.patient_id == p.id))
+    s.execute(update(Message).where(Message.patient_id == p.id).values(in_reply_to_id=None))
+    s.execute(delete(Message).where(Message.patient_id == p.id))
+    s.execute(delete(Medication).where(col(Medication.prescription_id).in_(rxs)))
+    s.execute(delete(Prescription).where(Prescription.patient_id == p.id))
+    s.delete(p)
+
+
 @router.get("/patients/{patient_id}/link", response_model=S.TelegramLink, tags=["patients"])
 async def get_link(patient_id: int, s: DB):
     """The patient's personal Telegram start link (show it as a link or QR code)."""
@@ -151,6 +176,27 @@ async def reset_link(patient_id: int, s: DB):
 
 # --- reminders -----------------------------------------------------------------------------
 
+def _end_of(d: date) -> datetime:
+    return to_utc(datetime.combine(d, time(23, 59, 59)))
+
+
+def _course_end(kind: str, days: int | None, until: date | None, first_day: date,
+                start: datetime, p: Patient) -> datetime:
+    """End of a course that starts at `start` (local day `first_day`). 422 if invalid."""
+    if kind == "days":
+        if not days:
+            raise HTTPException(422, "durationDays is required for durationKind=days")
+        return _end_of(first_day + timedelta(days=days - 1))
+    if kind == "date":
+        if not until or until < first_day:
+            raise HTTPException(422, "untilDate is required and must be on/after the start")
+        return _end_of(until)
+    if not p.next_appointment_at or p.next_appointment_at <= max(start, utcnow()):
+        raise HTTPException(422, "durationKind=appointment needs a future nextAppointmentAt "
+                                 "on the patient")
+    return p.next_appointment_at
+
+
 def _course_dates(body: S.ReminderCreate, p: Patient) -> tuple[datetime, datetime]:
     now = utcnow()
     today = datetime.now(local_tz()).date()
@@ -159,22 +205,29 @@ def _course_dates(body: S.ReminderCreate, p: Patient) -> tuple[datetime, datetim
     start = now if not body.start_date or body.start_date == today else to_utc(
         datetime.combine(body.start_date, time.min))
     first_day = body.start_date or today
+    return start, _course_end(body.duration_kind, body.duration_days, body.until_date,
+                              first_day, start, p)
 
-    def end_of(d: date) -> datetime:
-        return to_utc(datetime.combine(d, time(23, 59, 59)))
 
-    if body.duration_kind == "days":
-        if not body.duration_days:
-            raise HTTPException(422, "durationDays is required for durationKind=days")
-        return start, end_of(first_day + timedelta(days=body.duration_days - 1))
-    if body.duration_kind == "date":
-        if not body.until_date or body.until_date < first_day:
-            raise HTTPException(422, "untilDate is required and must be on/after the start")
-        return start, end_of(body.until_date)
-    if not p.next_appointment_at or p.next_appointment_at <= start:
-        raise HTTPException(422, "durationKind=appointment needs a future nextAppointmentAt "
-                                 "on the patient")
-    return start, p.next_appointment_at
+def _change_duration(s: Session, rx: Prescription, changes: dict) -> None:
+    """Apply durationKind/durationDays/untilDate from a PATCH to the course. Missing fields
+    fall back to the course's current values; days and dates count from the course start."""
+    kind = changes.pop("duration_kind", None) or rx.duration_kind
+    days = changes.pop("duration_days", None)
+    until = changes.pop("until_date", None)
+    if kind == "days" and days is None:
+        days = rx.duration_days
+    if kind == "date" and until is None and rx.duration_kind == "date" and rx.end_date:
+        until = to_local(rx.end_date).date()
+    end = _course_end(kind, days, until, to_local(rx.start_date).date(), rx.start_date,
+                      s.get(Patient, rx.patient_id))
+    if end < utcnow():
+        raise HTTPException(422, "That would end the course in the past; use "
+                                 "POST /api/reminders/{id}/end to stop it now")
+    rx.end_date = end
+    rx.duration_kind = kind
+    rx.duration_days = days if kind == "days" else None
+    s.add(rx)
 
 
 @router.get("/patients/{patient_id}/reminders", response_model=list[S.Reminder],
@@ -216,8 +269,9 @@ def get_reminder(reminder_id: int, s: DB):
 
 @router.patch("/reminders/{reminder_id}", response_model=S.Reminder, tags=["reminders"])
 def update_reminder(reminder_id: int, body: S.ReminderUpdate, s: DB):
-    """Pause/resume, change times, dose, message or alerting. Pausing removes upcoming
-    doses (so they don't count as missed); resuming or new times reschedule them."""
+    """Pause/resume, change times, course length, dose, message or alerting. Pausing removes
+    upcoming doses (so they don't count as missed); resuming, new times or a new course
+    length reschedule them. Past doses are never touched."""
     m, rx = _med(s, reminder_id)
     changes = body.model_dump(exclude_unset=True)
     reschedule = False
@@ -229,16 +283,26 @@ def update_reminder(reminder_id: int, body: S.ReminderUpdate, s: DB):
     if "times_of_day" in changes:
         m.times_of_day = ",".join(changes.pop("times_of_day"))
         reschedule = True
+    duration_changed = bool({"duration_kind", "duration_days", "until_date"} & changes.keys())
+    if duration_changed:
+        _change_duration(s, rx, changes)
+        reschedule = True
     if "custom_message" in changes:
         m.checkin_message = changes.pop("custom_message") or None
     for k, v in changes.items():
         setattr(m, k, v)
     s.add(m)
+    # A new end date applies to every medication on the course (the API makes one per course).
+    meds = s.exec(select(Medication).where(Medication.prescription_id == rx.id)).all() \
+        if duration_changed else [m]
     if reschedule:
-        _drop_future_doses(s, m)
+        for med in meds:
+            _drop_future_doses(s, med)
     s.commit()
-    if reschedule and not m.paused and V.reminder_status(m, rx) != "ended":
-        schedule_course(s, rx, m)
+    if reschedule and V.reminder_status(m, rx) != "ended":
+        for med in meds:
+            if not med.paused:
+                schedule_course(s, rx, med)
     return V.reminder(s, m, rx)
 
 

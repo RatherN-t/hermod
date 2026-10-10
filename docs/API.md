@@ -35,12 +35,13 @@ trace behind every reply.
 | `POST /api/patients` | Create a patient → full detail incl. their Telegram start link |
 | `GET /api/patients/{id}` | Everything about one patient: profile, link, adherence, flags, reminders |
 | `PATCH /api/patients/{id}` | Edit name, doctor, DOB, language, next appointment, notes |
+| `DELETE /api/patients/{id}` | **Permanent.** Deletes the patient and all their reminders, doses, messages, traces and flags → `204`. Confirm with the user first |
 | `GET /api/patients/{id}/link` | `{linked, linkCode, telegramLink}`; show as a link or QR code |
 | `POST /api/patients/{id}/link/reset` | New link, unlinks the current chat (if the link leaked) |
 | `GET /api/patients/{id}/reminders` | The patient's reminders (all statuses) |
 | `POST /api/patients/{id}/reminders` | Prescribe: creates the course and schedules every dose |
 | `GET /api/reminders/{id}` | One reminder |
-| `PATCH /api/reminders/{id}` | Pause/resume, change times, dose, instructions, message, alerting |
+| `PATCH /api/reminders/{id}` | Pause/resume, change times, course length, dose, instructions, message, alerting |
 | `POST /api/reminders/{id}/end` | Stop the course now (doctor discontinued it); history kept |
 | `POST /api/reminders/{id}/checkin` | Send the check-in right now (handy in demos) |
 | `GET /api/patients/{id}/doses?from=&to=&status=&reminderId=` | Dose timeline, oldest first, includes future doses |
@@ -77,12 +78,28 @@ trace behind every reply.
 `durationKind: "appointment"` ends the course at the patient's `nextAppointmentAt`, so set
 that on the patient first (422 otherwise).
 
+**Editing a reminder** (`PATCH /api/reminders/{id}`, send only what changed): `status`
+(`"active"`/`"paused"`), `timesOfDay`, `customMessage` (`""` = standard message),
+`alertOnMissed`, `dose`, `instructions`, `maxDailyDoses`, and the course length with the same
+fields as create: `durationKind`, `durationDays`, `untilDate`. Course length counts from the
+course's original `startDate`, e.g. `{"durationDays": 10}` on a course that started 3 days ago
+leaves 7 more days. Leaving out `durationKind` keeps the current kind;
+`{"durationKind": "appointment"}` ends at the patient's current `nextAppointmentAt`. A length
+change moves `endDate`, recomputes `totalDoses`, and replaces the upcoming doses (past doses and
+any already asked about are kept), the same way pause/resume and new times do. 422 if the
+new end would be in the past (use `POST /api/reminders/{id}/end` to stop now), and the same
+422s as create for a missing `durationDays`/`untilDate` or no future appointment. Changing the
+length of an ended course reopens it if the new end is in the future.
+
 `ActiveReminder` ↔ the `Reminder` response: `id, name, timesOfDay, durationKind,
 durationDays, startDate, endDate, status, customMessage, alertOnMissed, dosesSent,
 dosesConfirmed, totalDoses` all exist with those names. `status` is
 `"active" | "paused" | "scheduled" | "ended"` (your type has the first two). Extra:
 `dose, instructions, maxDailyDoses, nextDoseAt, prescriptionId, patientId`. `untilDate` isn't
-returned; use `endDate`.
+returned; use `endDate`. In responses, `startDate` and `endDate` are UTC datetimes (e.g.
+`"2026-10-08T12:59:59Z"` is the end of Oct 8 in Sydney), not `"YYYY-MM-DD"`; convert to the
+clinic's timezone before showing a calendar date. `name` can't be changed with `PATCH`; add a
+new reminder instead.
 
 ## Typical flows
 
@@ -198,3 +215,51 @@ of patient-reported flags quote what the patient said.
 ```
 
 `needsAttention` holds patients with open urgent or warning flags, or adherence under 80%.
+
+## Frontend integration
+
+- **Config (Vite env):** `VITE_API_URL`, default `http://localhost:8000`. `VITE_API_KEY` is
+  optional; if set, send it as `X-API-Key` (only needed when the backend has `API_KEY`).
+- **CORS:** `http://localhost:5173` and `http://127.0.0.1:5173` are allowed by default
+  (`CORS_ORIGINS`).
+- **Adherence numbers the UI shows**, from any `adherence` object:
+  taken = `taken + late`; due = `taken + late + missed + unknown`;
+  prescribed = due + `pending`. `pending` here only counts doses whose time has passed but
+  that haven't been answered yet (under 6 hours old), so "prescribed" means "prescribed so
+  far". For the whole course use the reminder's `totalDoses` (per reminder: `dosesSent` = due,
+  `dosesConfirmed` = taken). `adherencePct` is already `round(100 * taken / due)`.
+
+**Run the backend locally for UI work** (fake data, never touches Supabase or Telegram):
+
+```bash
+python3.13 -m venv .venv && .venv/bin/pip install -e ".[dev]"     # once
+# Seed a fictional clinic: 12 synthetic patients with dose history
+DATABASE_URL=sqlite:///./hermod-dev.db .venv/bin/python -m hermod.demo seed-clinic --reset
+# Serve it: console channel (check-ins are printed), no bot token, no LLM key
+DATABASE_URL=sqlite:///./hermod-dev.db CHANNEL=console TELEGRAM_BOT_TOKEN= GEMINI_API_KEY= \
+  .venv/bin/uvicorn hermod.main:app --port 8000
+```
+
+Drop `TELEGRAM_BOT_TOKEN=` to use the token from `.env`: `telegramLink` is then filled in, and
+`CHANNEL=console` still means no Telegram poller and nothing is sent.
+
+**The same clinic in the shared database (Supabase).** It only adds patients and refuses to
+run without `--shared`; `--reset` is SQLite only. `--remove` deletes just these demo patients
+(matched by phone), leaving everyone else's data alone:
+
+```bash
+.venv/bin/python -m hermod.demo seed-clinic --shared            # add (uses .env DATABASE_URL)
+.venv/bin/python -m hermod.demo seed-clinic --remove --shared   # take them out
+```
+
+Phone numbers are ACMA's reserved numbers for fiction (0491 570 156 etc.,
+<https://www.acma.gov.au/use-phone-numbers-fiction>), so texting a demo patient their link
+reaches no one. The UI types and shows Australian mobiles as `0491 570 156` and sends
+`61491570156`.
+
+Re-run the seed command to refresh the history (it's built relative to now). The variables on
+the command line override `.env`, so the real database and bot are never used. The seed
+(`hermod/demo_clinic.py`) gives a mix to design against: high and low adherence, two
+medications on one patient, a Spanish-speaking patient, a patient with no reminders, a
+finished course (`status: "ended"`), and patients with and without `nextAppointmentAt`.
+`telegramLink` is `null` without a bot token, so show `linkCode` or a placeholder.

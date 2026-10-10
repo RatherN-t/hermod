@@ -15,8 +15,14 @@ within 24h of an emergency; otherwise it's stored as a warning. Every LLM call i
 The backend now also serves a **JSON API** for the doctor dashboard and the prescription
 form (patients, reminders, dose timeline, adherence, flags, conversation, agent traces); see
 [docs/API.md](API.md) or `/docs` on the running server. It runs on SQLite locally or on
-**Supabase Postgres** (live data is in Supabase now; tests also pass on Postgres). The remaining work is the **frontend**:
-Ethan's `frontend/` has the medication-reminder form on demo data, to be wired to the API.
+**Supabase Postgres** (live data is in Supabase now; tests also pass on Postgres). `PATCH /api/reminders/{id}`
+can also change the course length (`durationKind`/`durationDays`/`untilDate`), and
+`python -m hermod.demo seed-clinic` seeds a fictional 12-patient clinic (local SQLite with
+`--reset`, or added to Supabase with `--shared`; `--remove --shared` takes it out again; see
+"Frontend integration" in `docs/API.md`). `DELETE /api/patients/{id}` removes a patient and
+all their data. The **frontend** (`frontend/`, Ethan) is wired to the API: patient list with
+add patient, patient page with the Telegram start link (text it or copy it), remove patient
+(with a confirmation dialog), and reminders (create, pause/resume, edit).
 
 ## The idea
 
@@ -70,12 +76,13 @@ lives in a messaging app).
 | `hermod/adherence/rules.py` | working | `evaluate_patient()` (missed streak, extra dose, daily max, unresponsive 24h), `adherence_summary()` |
 | `hermod/scheduler/jobs.py` | working | Minute tick: create DoseEvents, send due check-ins, mark no-reply doses `UNKNOWN` after 6h |
 | `hermod/demo.py` | working | `seed` / `link` / `chat` CLI |
+| `hermod/demo_clinic.py` | working | `seed-clinic`: 12 synthetic patients with dose history; SQLite, or Supabase with `--shared` (add only; `--remove` deletes just them) |
 | `hermod/api/routes.py` | working | `/api/...` endpoints (list in `docs/API.md`), optional `X-API-Key` |
 | `hermod/api/schemas.py`, `views.py` | working | camelCase response/request models; row → response builders |
 | `hermod/db/session.py` | working | SQLite/Postgres engine, `add_missing_columns()`, Supabase RLS lock-down |
 | `hermod/db/copy.py` | working | `python -m hermod.db.copy --to <url>`: copy all data, keeping ids |
-| `frontend/` | form, demo data | React 19 + Vite 8 + TypeScript medication-reminder form; not connected to the API |
-| `tests/` | 62 passing | API, agent (LLM mocked), Telegram, guardrails, rules, scheduler, DB upkeep. `TEST_DATABASE_URL=postgresql://...` runs them on Postgres |
+| `frontend/` | working | React 19 + Vite 8 + TS dashboard on the API: patient list, add/remove patient, Telegram link sharing, reminders. `VITE_API_URL` (default :8000) |
+| `tests/` | 72 passing | API, agent (LLM mocked), Telegram, guardrails, rules, scheduler, DB upkeep. `TEST_DATABASE_URL=postgresql://...` runs them on Postgres |
 
 ## Next steps (suggested build order)
 
@@ -83,6 +90,8 @@ lives in a messaging app).
    the patient's Telegram link/QR from `link.telegramLink`, and the doctor view from
    `/api/dashboard`, `/api/patients/{id}`, `/adherence`, `/doses`, `/flags`, `/messages`,
    `/api/traces/{id}`. Field mapping from the existing TypeScript types is in `docs/API.md`.
+   For UI work run the API on the seeded SQLite clinic (command in `docs/API.md`, "Frontend
+   integration"), not on Supabase.
 2. **Shared database:** done. Live data is in Supabase (see setup below); the local
    `hermod.db` is a stale copy from before the move.
 3. **Hand-over test:** someone unfamiliar does a 2-day course on their own phone. Seed them, send
