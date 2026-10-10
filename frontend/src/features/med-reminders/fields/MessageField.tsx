@@ -45,7 +45,7 @@ export function MessageField({ firstName, medication, value, error, onChange, on
       {custom && (
         <div className="flex flex-col gap-2">
           <Label htmlFor={id} className="sr-only">
-            WhatsApp message
+            Telegram message
           </Label>
           <Textarea
             id={id}

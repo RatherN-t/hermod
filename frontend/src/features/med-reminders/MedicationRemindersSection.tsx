@@ -94,7 +94,7 @@ export function MedicationRemindersSection({ patient, today }: Props) {
           ))}
         </ul>
       ) : (
-        !form && <p className="text-sm text-muted">No reminders yet. Add a medication to start sending WhatsApp reminders.</p>
+        !form && <p className="text-sm text-muted">No reminders yet. Add a medication to start sending Telegram reminders.</p>
       )}
 
       {form && (

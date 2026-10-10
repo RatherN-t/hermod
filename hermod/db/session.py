@@ -16,3 +16,9 @@ def init_db() -> None:
 def get_session() -> Iterator[Session]:
     with Session(engine) as session:
         yield session
+
+
+def new_session() -> Session:
+    """For code outside request handlers (agent, scheduler). Looks up `engine` at call time
+    so tests can swap it."""
+    return Session(engine)

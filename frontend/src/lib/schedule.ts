@@ -113,7 +113,7 @@ export function summarySentence(args: {
   return `${firstName} will get ${plural(times.length, 'reminder', 'reminders')} a day for ${plural(days, 'day', 'days')} (${total} total), ending ${formatDate(end, today)}.`
 }
 
-/** Default WhatsApp reminder text. The "Taken" and "Remind me in 30 min" buttons are added by the sender. */
+/** Default Telegram reminder text. The "Taken" and "Remind me in 30 min" buttons are added by the sender. */
 export function standardMessage(firstName: string, medication: string): string {
   const med = medication.trim() || 'your medication'
   return `Hi ${firstName}, it’s time to take ${med}. Tap “Taken” once you’ve had it. – everwell clinic`

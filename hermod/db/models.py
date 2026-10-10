@@ -3,6 +3,7 @@
 Every dose has a status the agent fills in from the patient's replies; that
 status history *is* the adherence log the doctor reads.
 """
+import secrets
 from datetime import UTC, datetime
 from enum import StrEnum
 
@@ -16,10 +17,14 @@ def _now() -> datetime:
 class Patient(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     name: str
-    wa_phone: str = Field(index=True, unique=True)  # E.164 without '+', as WhatsApp sends it
+    phone: str = Field(index=True, unique=True)  # digits only, e.g. 61400000000
+    telegram_chat_id: str | None = Field(default=None, index=True)
+    # Secret in the patient's onboarding link (t.me/<bot>?start=<code>) that ties their chat
+    # to this record. Telegram doesn't share phone numbers with bots.
+    link_code: str = Field(default_factory=lambda: secrets.token_urlsafe(9), index=True)
     doctor_name: str = ""
     is_synthetic: bool = True  # demo data must be labelled
-    last_inbound_at: datetime | None = None  # drives the 24h free-form window
+    last_inbound_at: datetime | None = None  # None until the patient's first message
     created_at: datetime = Field(default_factory=_now)
 
 
@@ -58,6 +63,7 @@ class DoseEvent(SQLModel, table=True):
     patient_id: int = Field(foreign_key="patient.id", index=True)
     scheduled_for: datetime = Field(index=True)
     status: DoseStatus = DoseStatus.PENDING
+    checkin_sent_at: datetime | None = None
     reported_at: datetime | None = None
     patient_note: str = ""  # side effects, reasons for missing, etc.
 
@@ -72,7 +78,7 @@ class Message(SQLModel, table=True):
     patient_id: int = Field(foreign_key="patient.id", index=True)
     direction: Direction
     text: str
-    wa_message_id: str = ""
+    external_id: str = ""
     created_at: datetime = Field(default_factory=_now, index=True)
 
 

@@ -8,3 +8,4 @@ __pycache__/
 n8n/data/
 *.egg-info/
 hermod-1/
+.claude/settings.local.json

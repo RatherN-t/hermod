@@ -1,24 +1,25 @@
 # Handoff
 
-Last updated: Sat 10 Oct 2026 (build day 2 of 3). Submissions close **Mon 12 Oct, 9am AEDT**.
+Last updated: Sat 10 Oct 2026, evening (build day 2 of 3). Submissions close **Mon 12 Oct, 9am AEDT**.
 
 ## Status in one paragraph
 
-The design is written and the baseline architecture is pushed. Every Python module exists with
-its interface and docstring, but the bodies are `raise NotImplementedError`. Only two things
-work end to end: `GET /health` and the Meta webhook verification handshake (`GET /webhook/whatsapp`).
-The data model in `hermod/db/models.py` is complete. Teammate Ethan has added `frontend/`, which
-is still the default Vite + React starter page with no Hermod UI. **The user has not yet approved
-the design for implementation.** They asked for the plan and scaffold first. Confirm with the user
-before writing feature code, unless they've already said "go".
+The patient-facing agent works end to end **on Telegram** and has been tested live on a real
+phone. A patient opens their personal start link, Hermod links the chat to their record and
+welcomes them, checks in at each dose time, logs what they report with tools, answers "did I
+already take it?" from the log, flags side effects and questions for the doctor, and sends
+overdose or emergency messages to a fixed escalation without the LLM. Every LLM call is traced.
+The two big remaining pieces are the **doctor dashboard** and **prescription entry** (patients
+are currently created with `python -m hermod.demo seed`). Teammate Ethan's `frontend/` has a
+medication-reminder form with demo data that isn't wired to the backend yet.
 
 ## The idea
 
 A patient leaves the clinic with a prescription. By the follow-up visit, neither they nor the
-doctor knows how closely it was followed. Hermod sits in the patient's WhatsApp as a contact and
+doctor knows how closely it was followed. Hermod sits in the patient's Telegram as a contact and
 checks in at each dose, the way a nurse would. It logs taken, late, missed and extra doses, and
 flags problems for the doctor. Architecture inspiration: https://instinct.com/ (an agent that
-lives in WhatsApp).
+lives in a messaging app).
 
 - **The new ability (the hackathon's central question):** the patient can now follow their course
   correctly, and the doctor can now see what happened between visits.
@@ -30,88 +31,69 @@ lives in WhatsApp).
 
 | Decision | Choice | Why |
 | --- | --- | --- |
-| WhatsApp | **Meta WhatsApp Cloud API**, free test number | Official, so it's credible for health. Free. Limit: 5 verified recipient phones. |
-| 24h rule | Free-form replies only within 24h of the patient's last message. Proactive check-ins outside that window need a **pre-approved template**. | Meta policy. `Patient.last_inbound_at` drives the choice between `send_text` and `send_template`. |
-| LLM | **Gemini Flash free tier via LiteLLM** (`LLM_MODEL=gemini/gemini-2.5-flash`) | Free, supports tool calling, and vision (stretch goal: read a prescription photo). Swapping models means changing one env var. |
+| Messaging | **Telegram Bot API**, long polling | Free, no approval, templates or 24h window, and no public URL needed. WhatsApp was tried first (Meta Cloud API and Twilio adapters were built), but Meta blocked developer signup from a new device, Twilio trial accounts can only send fixed templates, and a borrowed Meta test number was banned. See the design doc. |
+| Patient linking | Personal link `t.me/<bot>?start=<link_code>` | Telegram doesn't share phone numbers with bots. If Telegram drops the code (chat already started), the patient can send the code as a message. |
+| LLM | **Gemini 3.5 Flash Lite via LiteLLM** (`LLM_MODEL=gemini/gemini-3.5-flash-lite`) | Free, tool calling, about 1–2s per call. `gemini-2.5-flash` is retired for new keys; `gemini-3.8-flash` took 60s+ per call on the free tier. |
 | Core language | **Python / FastAPI** | User preference. |
-| n8n | **Optional, alerts only** (`docker compose --profile n8n`) | User asked about n8n. We agreed to keep the logic in Python so there's one codebase to debug. |
-| Storage | SQLite + SQLModel | Free, no setup. |
+| n8n | **Optional, alerts only** (`docker compose --profile n8n`) | Keep the logic in Python so there's one codebase to debug. |
+| Storage | SQLite + SQLModel | Free, no setup. Datetimes are timezone-aware UTC. |
 | Scheduling | APScheduler, in-process | Free, no extra infrastructure. |
-| Safety | No dosing advice. Overdose or emergency text skips the LLM and gets a fixed escalation message (000 / Poisons Information Centre 13 11 26) plus an URGENT flag. | Health product; judges will ask about this. |
+| Safety | No dosing advice. Overdose or emergency text skips the LLM and gets a fixed escalation message (000 / Poisons Information Centre 13 11 26) plus an URGENT flag. Replies containing dosing advice are replaced. Flag summaries state only what the patient said. | Health product; judges will ask about this. |
 | Repo | Public: https://github.com/RatherN-t/hermod | |
 
 ## Open decisions
 
 1. **What `frontend/` is for.** It could be the public website (a required hackathon
-   deliverable), the doctor dashboard, or both. The design doc planned Jinja pages in
-   `hermod/dashboard/` for the doctor. If the React app becomes the dashboard, `hermod/dashboard/`
-   should become a JSON API (`/api/...`) instead. Ask the user or Ethan.
+   deliverable), the doctor dashboard, or both. If the React app becomes the dashboard,
+   `hermod/dashboard/` should be a JSON API (`/api/...`) instead of Jinja pages. Ask the user or Ethan.
 2. **Demo person:** antibiotics (recommended) or chronic medication.
 3. **Prescription entry:** web form only, or also a photo parsed by Gemini vision (stretch goal).
 
 ## Code map
 
-| Path | State | Contains / will contain |
+| Path | State | Contains |
 | --- | --- | --- |
-| `hermod/main.py` | working | App, lifespan (init DB, start scheduler), `/health` |
-| `hermod/config.py` | working | Settings loaded from `.env` |
-| `hermod/db/models.py` | working | Patient, Prescription, Medication, DoseEvent(status), Message, AgentTrace, Flag |
-| `hermod/db/session.py` | working | Engine, `init_db`, `get_session` |
-| `hermod/channels/base.py` | working | `Channel` protocol, `IncomingMessage` |
-| `hermod/channels/routes.py` | partial | GET verify works; POST receive is a stub |
-| `hermod/channels/meta_whatsapp.py` | stub | `send_text`, `send_template`, `parse_webhook`, `verify_signature` |
-| `hermod/llm/client.py` | stub | `complete()` via LiteLLM; `extract_prescription_from_image()` |
-| `hermod/harness/tracer.py` | stub | `traced_completion()`: calls the LLM and writes an `AgentTrace` row |
-| `hermod/harness/guardrails.py` | stub (message text done) | `detect_emergency()`, `check_outbound()` |
-| `hermod/harness/alerts.py` | stub | `notify_doctor()`: POST to `N8N_ALERT_WEBHOOK_URL` |
-| `hermod/agent/prompts.py` | done | System prompt template |
-| `hermod/agent/tools.py` | specs done | `log_dose`, `flag_issue` specs; `execute_tool()` stub |
-| `hermod/agent/agent.py` | stub | `handle_inbound()`, `run_checkin()` |
-| `hermod/adherence/rules.py` | stub | `evaluate_patient()`, `adherence_summary()` |
-| `hermod/scheduler/jobs.py` | partial | Scheduler starts, but no jobs are registered |
+| `hermod/main.py` | working | App, lifespan (init DB, scheduler, Telegram poller), logging, `/health` |
+| `hermod/config.py` | working | Settings from `.env` (`GEMINI_API_KEY`, `TELEGRAM_BOT_TOKEN`, `CHANNEL`, ...) |
+| `hermod/db/models.py` | working | Patient (`phone`, `telegram_chat_id`, `link_code`), Prescription, Medication, DoseEvent, Message, AgentTrace, Flag |
+| `hermod/channels/telegram.py` | working | `send_text`, long-polling `poll_forever`, `parse_update`; never logs the bot token |
+| `hermod/channels/console.py` | working | Prints instead of sending (`CHANNEL=console`, tests, CLI) |
+| `hermod/llm/client.py` | working | `complete()` via LiteLLM; `extract_prescription_from_image()` is still a stub |
+| `hermod/harness/tracer.py` | working | `traced_completion()` writes an `AgentTrace` row per call, including errors |
+| `hermod/harness/guardrails.py` | working | `detect_emergency()`, `check_outbound()` |
+| `hermod/harness/alerts.py` | working | `notify_doctor()` POSTs to `N8N_ALERT_WEBHOOK_URL` if set |
+| `hermod/agent/agent.py` | working | `handle_inbound()` (linking, guardrails, tool loop, reply), `run_checkin()` |
+| `hermod/agent/tools.py` | working | `log_dose`, `flag_issue` |
+| `hermod/adherence/rules.py` | working | `evaluate_patient()` (missed streak, extra dose, daily max, unresponsive 24h), `adherence_summary()` |
+| `hermod/scheduler/jobs.py` | working | Minute tick: create DoseEvents, send due check-ins, mark no-reply doses `UNKNOWN` after 6h |
+| `hermod/demo.py` | working | `seed` / `link` / `chat` CLI |
 | `hermod/dashboard/routes.py` | empty router | Doctor views (see open decision 1) |
-| `frontend/` | Vite starter page | React 19 + Vite 8 + TypeScript |
-| `n8n/` | README only | Exported n8n workflows go here |
-| `tests/test_smoke.py` | 2 passing | Health check; webhook rejects a bad token |
+| `frontend/` | form, demo data | React 19 + Vite 8 + TypeScript medication-reminder form; not connected to the API |
+| `tests/` | 44 passing | Agent (LLM mocked), Telegram, guardrails, rules, scheduler, smoke |
 
 ## Next steps (suggested build order)
 
-Each step should be demoable on its own, so stopping early still leaves something to show.
-
-1. **WhatsApp echo:** implement `MetaWhatsAppChannel` (`parse_webhook`, `send_text`,
-   `verify_signature`) and wire POST `/webhook/whatsapp` to store a `Message` and echo the
-   text back. Test with fixture payloads from Meta's docs. Then try it live through a tunnel.
-2. **LLM and harness:** `llm.complete()` via LiteLLM, and `traced_completion()` writing an
-   `AgentTrace`. Swap the echo for an LLM reply.
-3. **Agent with tools:** `handle_inbound()` builds the prompt from the patient's current
-   prescription, runs the tool loop (`log_dose` and `flag_issue` write `DoseEvent`s and `Flag`s),
-   then sends the reply. Add guardrails before and after the LLM call.
-4. **Seed script:** synthetic doctor, patient and 7-day amoxicillin prescription, so the DoseEvents exist.
-5. **Scheduler:** a tick every minute finds due `DoseEvent`s and calls `run_checkin()`
-   (template if outside 24h, otherwise free-form). Mark no-reply doses `UNKNOWN` after N hours.
-6. **Adherence rules:** 2 or more consecutive missed doses; more than `max_daily_doses`;
-   stopped before `end_date`. Write `Flag`s and call `notify_doctor()`.
-7. **Doctor view:** patient list, dose timeline, % adherence, open flags, and the agent trace
-   for each message. Where it lives depends on open decision 1.
-8. **Prescription entry form** (and, as a stretch, a photo parsed by Gemini vision).
-9. **Hackathon deliverables:** public website, 4-page deck, demo of 5 minutes or less (see the brief),
-   plus a hand-over test with someone unfamiliar with the product.
+1. **Doctor view:** patient list, dose timeline, % adherence (`adherence_summary()`), open flags,
+   and the `AgentTrace` for each message. Where it lives depends on open decision 1.
+2. **Prescription entry:** a form (or Ethan's frontend) that creates Patient, Prescription and
+   Medication rows, then shows the patient's Telegram start link or a QR code of it.
+3. **Hand-over test:** someone unfamiliar does a 2-day course on their own phone. Seed them, send
+   the link, and keep the server running.
+4. **Hackathon deliverables:** public website, 4-page deck, demo of 5 minutes or less (see the brief).
+5. Stretch: prescription photo parsed by Gemini vision.
 
 ## Setup the user must do (not code; check with the user what's done)
 
-- [ ] Gemini API key from https://aistudio.google.com/apikey, saved as `GEMINI_API_KEY` in `.env`.
-- [ ] Meta developer app with the WhatsApp product enabled. Copy the token and phone number ID into `.env`,
-      and add the testers' phones as verified recipients.
-- [ ] Submit a **utility template** for dose check-ins as early as possible. Approval takes time.
-      Until it's approved, the default `hello_world` template is the only option outside the 24h window.
-- [ ] Free tunnel (`cloudflared tunnel --url http://localhost:8000` or ngrok). Register
-      `https://<tunnel>/webhook/whatsapp` with `WHATSAPP_VERIFY_TOKEN` in Meta and subscribe to `messages`.
+- [x] Gemini API key in `.env` as `GEMINI_API_KEY`.
+- [x] Telegram bot from @BotFather, token in `.env` as `TELEGRAM_BOT_TOKEN`.
 - [ ] Everyone on the team completes the Builders Survey (a submission requirement).
 
 ## Gotchas
 
 - Python 3.14 is not supported (`requires-python <3.14`). Use 3.13.
-- WhatsApp sends phone numbers in E.164 format without the `+`. Store them the same way in `Patient.wa_phone`.
-- Meta retries webhooks that don't respond quickly, so return 200 at once and process in the background.
-  Deduplicate on `wa_message_id`.
+- Check-ins only go out while `uvicorn` is running. Keep the machine awake during the hand-over test.
+- `create_all` doesn't add columns to existing tables. After a model change, migrate `hermod.db`
+  by hand or delete it and re-seed.
+- `httpx` logs request URLs at INFO, and Telegram URLs contain the bot token, so `main.py` keeps
+  `httpx`/`httpcore` at WARNING. Don't lower that.
 - A `hermod-1/` folder may exist in some local checkouts. It's a teammate's second clone, so don't commit it.

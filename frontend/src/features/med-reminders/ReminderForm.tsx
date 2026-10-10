@@ -144,7 +144,7 @@ export function ReminderForm({ patient, today, initial, mode, taken, onSubmit, o
               aria-describedby={consentError ? 'reminder-consent-error' : undefined}
             />
             <Label htmlFor="reminder-consent" className="font-normal">
-              {patient.firstName} agreed to WhatsApp reminders at <span className="tabular-nums">{draft.waPhone}</span>
+              {patient.firstName} agreed to Telegram reminders at <span className="tabular-nums">{draft.waPhone}</span>
             </Label>
           </div>
           {consentError && <FieldError id="reminder-consent-error">{consentError}</FieldError>}

@@ -7,14 +7,10 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     gemini_api_key: str = ""
-    llm_model: str = "gemini/gemini-2.5-flash"
+    llm_model: str = "gemini/gemini-3.5-flash-lite"
 
-    whatsapp_token: str = ""
-    whatsapp_phone_number_id: str = ""
-    whatsapp_verify_token: str = ""
-    whatsapp_app_secret: str = ""
-    whatsapp_graph_version: str = "v21.0"
-    whatsapp_checkin_template: str = "hello_world"
+    telegram_bot_token: str = ""  # from @BotFather
+    channel: str = "telegram"  # "telegram" | "console" (prints instead of sending)
 
     database_url: str = "sqlite:///./hermod.db"
     timezone: str = "Australia/Sydney"
