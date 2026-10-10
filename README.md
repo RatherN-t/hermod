@@ -8,7 +8,7 @@ doctor before the next visit.
 
 ## Status
 
-Baseline architecture only. Modules are stubbed with interfaces. See
+Baseline architecture only. Modules are stubbed with interfaces. **Agents: start with [AGENTS.md](AGENTS.md) and [docs/HANDOFF.md](docs/HANDOFF.md).** See
 [the design doc](docs/superpowers/specs/2026-10-10-hermod-design.md).
 
 ## Stack (all free)

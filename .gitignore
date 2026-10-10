@@ -6,3 +6,5 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 n8n/data/
+*.egg-info/
+hermod-1/

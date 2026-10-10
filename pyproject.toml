@@ -27,3 +27,7 @@ include = ["hermod*"]
 
 [tool.ruff]
 line-length = 100
+extend-exclude = ["hermod-1", "frontend"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
