@@ -1,6 +1,11 @@
 import pytest
 
-from hermod.harness.guardrails import SAFE_FALLBACK, check_outbound, detect_emergency
+from hermod.harness.guardrails import (
+    SAFE_FALLBACK,
+    check_outbound,
+    detect_emergency,
+    detect_overdose,
+)
 
 
 @pytest.mark.parametrize("text", [
@@ -45,3 +50,8 @@ def test_dosing_advice_replaced(text):
 ])
 def test_normal_replies_kept(text):
     assert check_outbound(text) == text
+
+
+def test_overdose_is_a_subset_of_emergencies():
+    assert detect_overdose("I just took whole pack") and detect_emergency("I just took whole pack")
+    assert detect_emergency("my throat is swelling") and not detect_overdose("my throat is swelling")

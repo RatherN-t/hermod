@@ -59,6 +59,39 @@ async def test_emergency_bypasses_llm(patient, session, channel, llm):
     assert channel.sent[-1]["text"] == ESCALATION_MESSAGE
     flag = session.exec(select(Flag).where(Flag.kind == "emergency")).one()
     assert flag.severity == "urgent"
+    # The overdose is logged without the LLM, and the emergency flag points at it.
+    extra = session.exec(select(DoseEvent).where(DoseEvent.status == "extra")).one()
+    assert flag.dose_event_id == extra.id
+    assert "whole bottle" in extra.patient_note
+    # No second (extra_dose) flag for the same report.
+    assert len(session.exec(select(Flag)).all()) == 1
+
+
+async def test_non_overdose_emergency_logs_no_dose(patient, session, llm):
+    llm()
+    await handle_inbound(inbound("I can't breathe"))
+    assert session.exec(select(DoseEvent).where(DoseEvent.status == "extra")).all() == []
+    assert session.exec(select(Flag)).one().dose_event_id is None
+
+
+async def test_reported_overdose_reaches_next_prompt(patient, llm):
+    llm()
+    await handle_inbound(inbound("I just took whole pack", mid="e1"))
+    fake = llm(LLMResult(text="You reported taking the whole pack."))
+    await handle_inbound(inbound("did I take my meds today?", mid="e2"))
+    system = fake.calls[0][0]["content"]
+    assert 'extra (Reported overdose: "I just took whole pack")' in system
+
+
+def test_llm_urgent_flags_need_a_recent_emergency(patient, session):
+    from hermod.agent.tools import execute_tool
+
+    args = {"kind": "question_for_doctor", "severity": "urgent", "summary": "Did I take it?"}
+    assert execute_tool("flag_issue", args, patient.id, session)["severity"] == "warning"
+    session.add(Flag(patient_id=patient.id, kind="emergency", severity="urgent", summary="x"))
+    session.commit()
+    args = {"kind": "side_effect", "severity": "urgent", "summary": "Not good"}
+    assert execute_tool("flag_issue", args, patient.id, session)["severity"] == "urgent"
 
 
 async def test_dosing_advice_is_scrubbed(patient, channel, llm):

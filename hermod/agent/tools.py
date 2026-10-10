@@ -153,21 +153,52 @@ def _log_dose(session: Session, patient_id: int, args: dict) -> dict:
     }
 
 
+def record_reported_overdose(session: Session, patient_id: int, text: str) -> DoseEvent | None:
+    """Log an "extra" dose for an overdose report. Runs on the emergency path, without the
+    LLM, so the dose list (and the dashboard) shows it from the next turn on. Returns None
+    if it can't tell which medication was meant."""
+    med = _match_medication(active_medications(session, patient_id), text)
+    if med is None:
+        return None
+    now = utcnow()
+    event = DoseEvent(medication_id=med.id, patient_id=patient_id, scheduled_for=now,
+                      status=DoseStatus.EXTRA, reported_at=now,
+                      patient_note=f'Reported overdose: "{text[:300]}"')
+    session.add(event)
+    session.commit()
+    session.refresh(event)
+    return event
+
+
+# The LLM may only raise an urgent flag soon after an emergency (e.g. "not good" after an
+# overdose report). Otherwise urgent is left to the deterministic checks.
+URGENT_CONTEXT = timedelta(hours=24)
+
+
+def _recent_emergency(session: Session, patient_id: int) -> bool:
+    return session.exec(select(Flag).where(
+        Flag.patient_id == patient_id, Flag.kind == "emergency",
+        Flag.created_at >= utcnow() - URGENT_CONTEXT)).first() is not None
+
+
 def _flag_issue(session: Session, patient_id: int, args: dict) -> dict:
     dose_id = args.get("dose_id")
     if dose_id and (ev := session.get(DoseEvent, int(dose_id))) and ev.patient_id != patient_id:
         dose_id = None
+    severity = FlagSeverity(args["severity"])
+    if severity == FlagSeverity.URGENT and not _recent_emergency(session, patient_id):
+        severity = FlagSeverity.WARNING
     flag = Flag(
         patient_id=patient_id,
         dose_event_id=int(dose_id) if dose_id else None,
         kind=args["kind"],
-        severity=FlagSeverity(args["severity"]),
+        severity=severity,
         summary=args["summary"],
     )
     session.add(flag)
     session.commit()
     session.refresh(flag)
-    return {"ok": True, "flag_id": flag.id}
+    return {"ok": True, "flag_id": flag.id, "severity": str(severity)}
 
 
 def execute_tool(name: str, args: dict, patient_id: int, session: Session) -> dict:

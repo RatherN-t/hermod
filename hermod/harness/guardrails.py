@@ -17,7 +17,8 @@ SAFE_FALLBACK = (
 )
 
 # Err on the side of escalating: a false positive costs one canned message and a flag.
-_EMERGENCY = [
+# Reports of taking more than prescribed. These also get an "extra" dose logged.
+_OVERDOSE = [
     r"\boverdos",
     r"\btook (?:all|the whole|the rest|a handful|a (?:whole|full) (?:pack|box|bottle|strip))",
     r"\b(?:took|taken|swallowed) (?:way |far )?too (?:many|much)\b",
@@ -25,6 +26,8 @@ _EMERGENCY = [
      r"a bunch of) (?:pills|tablets|capsules)\b"),
     r"\bhandful of (?:pills|tablets|capsules)\b",
     r"\b(?:whole|entire) (?:bottle|pack|box|strip)\b",
+]
+_EMERGENCY = _OVERDOSE + [
     r"(?<!food )\bpoison",
     r"\bsuicid",
     r"\bkill (?:my ?self|me)\b",
@@ -40,6 +43,7 @@ _EMERGENCY = [
     r"\bpassed out\b|\bfainted\b|\bunconscious\b|\bcollapsed\b",
 ]
 _EMERGENCY_RE = re.compile("|".join(_EMERGENCY), re.IGNORECASE)
+_OVERDOSE_RE = re.compile("|".join(_OVERDOSE), re.IGNORECASE)
 
 # Agent replies that tell the patient to change what they take. Questions like
 # "did you take another one?" must still pass, so match instructions, not mentions.
@@ -57,6 +61,10 @@ _DOSING_RE = re.compile("|".join(_DOSING_ADVICE), re.IGNORECASE)
 
 def detect_emergency(text: str) -> bool:
     return bool(_EMERGENCY_RE.search(text or ""))
+
+
+def detect_overdose(text: str) -> bool:
+    return bool(_OVERDOSE_RE.search(text or ""))
 
 
 def check_outbound(text: str) -> str:

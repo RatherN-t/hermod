@@ -12,7 +12,13 @@ from hermod.agent.prompts import (
     SYSTEM_PROMPT,
     UNKNOWN_CHAT_REPLY,
 )
-from hermod.agent.tools import EARLY_WINDOW, TOOL_SPECS, active_medications, execute_tool
+from hermod.agent.tools import (
+    EARLY_WINDOW,
+    TOOL_SPECS,
+    active_medications,
+    execute_tool,
+    record_reported_overdose,
+)
 from hermod.channels import get_channel, patient_address
 from hermod.channels.base import Channel, IncomingMessage
 from hermod.config import get_settings
@@ -38,7 +44,8 @@ log = logging.getLogger(__name__)
 MAX_TOOL_ROUNDS = 4
 # Emergency messages skip the LLM, so without this the next turn would see them unhandled.
 ESCALATION_NOTE = ("[Automatic safety reply. The doctor already has an URGENT flag for the "
-                   "previous message; don't log or flag it again.] ")
+                   "previous message, and any overdose it reports is already in the dose list "
+                   "as 'extra'; don't log or flag it again.] ")
 HISTORY_LIMIT = 20
 
 
@@ -68,8 +75,11 @@ async def handle_inbound(msg: IncomingMessage, channel: Channel | None = None) -
         new_flags: list[Flag] = []
         if guardrails.detect_emergency(text):
             reply = guardrails.ESCALATION_MESSAGE
+            dose = (record_reported_overdose(s, patient.id, text)
+                    if guardrails.detect_overdose(text) else None)
             flag = Flag(patient_id=patient.id, kind="emergency", severity=FlagSeverity.URGENT,
-                        summary=f'Patient wrote: "{text[:300]}"')
+                        summary=f'Patient wrote: "{text[:300]}"',
+                        dose_event_id=dose.id if dose else None)
             s.add(flag)
             s.commit()
             new_flags.append(flag)
@@ -162,6 +172,8 @@ def build_system_prompt(s: Session, patient: Patient, first_contact: bool = Fals
     due_now = next((e for e in events if e.scheduled_for <= now + EARLY_WINDOW), None)
 
     def label(e: DoseEvent) -> str:
+        if e.status == DoseStatus.EXTRA and e.patient_note:
+            return f"extra ({e.patient_note[:150]})"
         if e.status != DoseStatus.PENDING:
             return str(e.status)
         if e is due_now:

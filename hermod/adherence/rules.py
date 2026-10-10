@@ -74,7 +74,8 @@ def evaluate_patient(patient_id: int, s: Session) -> list[Flag]:
                 [e for e in scheduled if e.status in _MISSED][-1].id)
 
         for e in evs:
-            if e.status == DoseStatus.EXTRA:
+            # An overdose report already has its own urgent emergency flag on this dose.
+            if e.status == DoseStatus.EXTRA and not _has_flag(s, patient_id, "emergency", e.id):
                 add("extra_dose", FlagSeverity.WARNING,
                     f"Extra dose of {name} reported ({to_local(e.scheduled_for):%a %H:%M})"
                     + (f": {e.patient_note}" if e.patient_note else ""), e.id)

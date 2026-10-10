@@ -8,11 +8,14 @@ The patient-facing agent works end to end **on Telegram** and has been tested li
 phone. A patient opens their personal start link, Hermod links the chat to their record and
 welcomes them, checks in at each dose time, logs what they report with tools, answers "did I
 already take it?" from the log, flags side effects and questions for the doctor, and sends
-overdose or emergency messages to a fixed escalation without the LLM. Every LLM call is traced.
+overdose or emergency messages to a fixed escalation without the LLM. An overdose report
+("took the whole pack") is also logged as an `extra` dose by code, linked to the urgent
+`emergency` flag, so the dashboard and later replies see it. The LLM can mark a flag urgent only
+within 24h of an emergency; otherwise it's stored as a warning. Every LLM call is traced.
 The backend now also serves a **JSON API** for the doctor dashboard and the prescription
 form (patients, reminders, dose timeline, adherence, flags, conversation, agent traces); see
 [docs/API.md](API.md) or `/docs` on the running server. It runs on SQLite locally or on
-**Supabase Postgres** (tested against Postgres 15). The remaining work is the **frontend**:
+**Supabase Postgres** (live data is in Supabase now; tests also pass on Postgres). The remaining work is the **frontend**:
 Ethan's `frontend/` has the medication-reminder form on demo data, to be wired to the API.
 
 ## The idea
@@ -60,7 +63,7 @@ lives in a messaging app).
 | `hermod/channels/console.py` | working | Prints instead of sending (`CHANNEL=console`, tests, CLI) |
 | `hermod/llm/client.py` | working | `complete()` via LiteLLM; `extract_prescription_from_image()` is still a stub |
 | `hermod/harness/tracer.py` | working | `traced_completion()` writes an `AgentTrace` row per call, including errors |
-| `hermod/harness/guardrails.py` | working | `detect_emergency()`, `check_outbound()` |
+| `hermod/harness/guardrails.py` | working | `detect_emergency()`, `detect_overdose()` (subset that also logs an extra dose), `check_outbound()` |
 | `hermod/harness/alerts.py` | working | `notify_doctor()` POSTs to `N8N_ALERT_WEBHOOK_URL` if set |
 | `hermod/agent/agent.py` | working | `handle_inbound()` (linking, guardrails, tool loop, reply), `run_checkin()` |
 | `hermod/agent/tools.py` | working | `log_dose`, `flag_issue` |

@@ -146,7 +146,10 @@ escalations and scheduled check-ins have no traces because they don't use the LL
  "checkinSentAt": null, "reportedAt": null, "note": ""}
 ```
 
-`status` is one of `pending, taken, late, missed, extra, unknown`.
+`status` is one of `pending, taken, late, missed, extra, unknown`. An `extra` dose is one the patient
+reported beyond the schedule: `scheduledFor` is when they reported it, and `note` holds their
+words, e.g. `"Reported overdose: \"I just took whole pack\""`. Extra doses aren't in
+`adherencePct`; they're counted in `extra`.
 
 `GET /api/patients/{id}/adherence`:
 
@@ -175,6 +178,13 @@ escalations and scheduled check-ins have no traces because they don't use the LL
 `kind` is one of `emergency` (urgent), `missed_doses`, `extra_dose`, `over_daily_max`
 (urgent), `unresponsive`, `side_effect`, `stopped_early`, `question_for_doctor`. Summaries
 of patient-reported flags quote what the patient said.
+
+- An `emergency` flag for an overdose report ("I took the whole pack") has `doseId` set to the
+  `extra` dose Hermod logged for it. Other emergencies (e.g. "I can't breathe") have
+  `doseId: null`. An overdose report doesn't get a separate `extra_dose` flag.
+- `urgent` comes from the safety checks (`emergency`, `over_daily_max`), or from Hermod's own
+  flags within 24 hours of an emergency (e.g. "not good" after an overdose). Any other flag
+  Hermod raises is at most `warning`.
 
 `GET /api/dashboard`:
 
