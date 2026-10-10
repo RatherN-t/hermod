@@ -28,7 +28,7 @@ first-hand evidence is a separate task.
    message plus an URGENT flag.
 5. Doctor dashboard: timeline, % adherence, open flags, full agent trace for each message.
 
-Done: 2–4. Next: 5, then 1.
+Done: 2–4, and the API behind 1 and 5. Next: the frontend for 1 and 5.
 
 Out of scope: real patient data, EHR integration, multi-clinic auth, languages other than
 English.
@@ -46,8 +46,8 @@ interface.
 | `harness/` | `tracer`: every LLM call logged to `AgentTrace`. `guardrails`: deterministic safety checks. `alerts`: flag fan-out to n8n. |
 | `adherence/` | Deterministic rules that turn the dose log into flags and summary stats. The LLM records, the rules judge. |
 | `scheduler/` | APScheduler tick creates DoseEvents, sends due check-ins, marks unanswered doses unknown after 6h. |
-| `db/` | SQLModel + SQLite: Patient, Prescription, Medication, DoseEvent, Message, AgentTrace, Flag. |
-| `dashboard/` | Jinja pages for the doctor (not built yet). |
+| `db/` | SQLModel on SQLite or Supabase Postgres: Patient, Prescription, Medication, DoseEvent, Message, AgentTrace, Flag. Adds new columns on startup; copy tool between databases. |
+| `api/` | JSON API for the React dashboard: patients, reminders, doses, adherence, flags, conversation, traces. |
 
 Data flow (inbound): Telegram `getUpdates` → `parse_update` → find patient by chat id (or link
 code) → store Message → guardrail pre-check → `traced_completion` with tools →
@@ -73,6 +73,12 @@ handled as inbound.
   and unresponsiveness are deterministic rules over the dose log. Flag summaries must
   describe only what the patient said, because the doctor reads them as fact.
 - **Safety:** no dosing advice, fixed escalation text, all demo data synthetic and labelled.
+- **Dashboard = React + JSON API.** Ethan's `frontend/` is the doctor UI; the backend only
+  serves JSON (`/api`, camelCase, documented in `docs/API.md`).
+- **Database:** SQLite locally, Supabase (free Postgres) when shared. Supabase exposes the
+  `public` schema over its Data API, so Hermod enables row-level security on its tables and
+  connects as the owner. A reminder is one medication on its own prescription, and a pause
+  removes upcoming doses so a paused course doesn't count as missed.
 - **n8n:** optional, used only for alert fan-out. The core logic stays in Python.
 - **Hosting for the demo:** run locally. Telegram long polling works from a laptop.
 

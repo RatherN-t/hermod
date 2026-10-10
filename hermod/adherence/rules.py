@@ -67,7 +67,8 @@ def evaluate_patient(patient_id: int, s: Session) -> list[Flag]:
                 streak += 1
             elif e.status != DoseStatus.PENDING:
                 break
-        if streak >= MISSED_STREAK:
+        alerts_on = meds[med_id].alert_on_missed if med_id in meds else True
+        if streak >= MISSED_STREAK and alerts_on:
             add("missed_doses", FlagSeverity.WARNING,
                 f"{streak} doses of {name} missed or unconfirmed in a row",
                 [e for e in scheduled if e.status in _MISSED][-1].id)

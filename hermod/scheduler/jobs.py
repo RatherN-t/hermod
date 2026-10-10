@@ -21,6 +21,68 @@ CHECKIN_GRACE = timedelta(hours=2)
 STALE_AFTER = timedelta(hours=6)
 
 
+# Whole-course scheduling is capped so an open-ended or mistyped course can't explode.
+MAX_COURSE_DAYS = 180
+
+
+def _times(med: Medication) -> list[time]:
+    return [time.fromisoformat(t.strip()) for t in med.times_of_day.split(",") if t.strip()]
+
+
+def schedule_medication(s: Session, rx: Prescription, med: Medication, days: list) -> int:
+    """Create missing DoseEvents for `med` on the given local dates, within the course.
+    Returns how many were created. Caller commits."""
+    if med.paused:
+        return 0
+    start = to_local(rx.start_date)
+    end_day = to_local(rx.end_date).date() if rx.end_date else None
+    existing = set(s.exec(
+        select(DoseEvent.scheduled_for).where(DoseEvent.medication_id == med.id)
+    ).all())
+    created = 0
+    for day in days:
+        if day < start.date() or (end_day and day > end_day):
+            continue
+        for t in _times(med):
+            local = datetime.combine(day, t, tzinfo=local_tz())
+            if local < start:
+                continue
+            at = to_utc(local)
+            if at not in existing:
+                s.add(DoseEvent(medication_id=med.id, patient_id=rx.patient_id, scheduled_for=at))
+                existing.add(at)
+                created += 1
+    return created
+
+
+def schedule_course(s: Session, rx: Prescription, med: Medication) -> int:
+    """Create every remaining dose of the course up front (from today), so the dashboard
+    can show the whole plan. Open-ended courses get the usual rolling window."""
+    today = datetime.now(local_tz()).date()
+    first = max(today, to_local(rx.start_date).date())
+    last = to_local(rx.end_date).date() if rx.end_date else today + timedelta(days=1)
+    last = min(last, first + timedelta(days=MAX_COURSE_DAYS))
+    days = [first + timedelta(days=d) for d in range((last - first).days + 1)]
+    created = schedule_medication(s, rx, med, days)
+    s.commit()
+    return created
+
+
+def planned_dose_count(rx: Prescription, med: Medication) -> int | None:
+    """Doses the full course should have, or None for an open-ended course."""
+    if rx.end_date is None:
+        return None
+    start, end = to_local(rx.start_date), to_local(rx.end_date)
+    count = 0
+    day = start.date()
+    while day <= end.date() and (day - start.date()).days <= MAX_COURSE_DAYS:
+        for t in _times(med):
+            if datetime.combine(day, t, tzinfo=local_tz()) >= start:
+                count += 1
+        day += timedelta(days=1)
+    return count
+
+
 def materialise_doses(s: Session, days_ahead: int = 1) -> int:
     """Create DoseEvents for every active medication from yesterday to `days_ahead` days out.
     Idempotent. Returns how many were created."""
@@ -28,25 +90,8 @@ def materialise_doses(s: Session, days_ahead: int = 1) -> int:
     window = [today + timedelta(days=d) for d in range(-1, days_ahead + 1)]
     created = 0
     for rx in s.exec(select(Prescription)).all():
-        start = to_local(rx.start_date)
-        end_day = to_local(rx.end_date).date() if rx.end_date else None
         for med in s.exec(select(Medication).where(Medication.prescription_id == rx.id)).all():
-            existing = set(s.exec(
-                select(DoseEvent.scheduled_for).where(DoseEvent.medication_id == med.id)
-            ).all())
-            for day in window:
-                if day < start.date() or (end_day and day > end_day):
-                    continue
-                for hhmm in filter(None, (t.strip() for t in med.times_of_day.split(","))):
-                    local = datetime.combine(day, time.fromisoformat(hhmm), tzinfo=local_tz())
-                    if local < start:
-                        continue
-                    at = to_utc(local)
-                    if at not in existing:
-                        s.add(DoseEvent(medication_id=med.id, patient_id=rx.patient_id,
-                                        scheduled_for=at))
-                        existing.add(at)
-                        created += 1
+            created += schedule_medication(s, rx, med, window)
     s.commit()
     return created
 

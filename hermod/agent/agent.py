@@ -54,11 +54,13 @@ async def handle_inbound(msg: IncomingMessage, channel: Channel | None = None) -
 
         first_contact = patient.last_inbound_at is None
         text = msg.text or ("[sent a photo]" if msg.media_url else "[unsupported message]")
-        s.add(Message(patient_id=patient.id, direction=Direction.INBOUND, text=text,
-                      external_id=msg.message_id))
+        inbound = Message(patient_id=patient.id, direction=Direction.INBOUND, text=text,
+                          external_id=msg.message_id)
+        s.add(inbound)
         patient.last_inbound_at = utcnow()
         s.add(patient)
         s.commit()
+        s.refresh(inbound)
 
         new_flags: list[Flag] = []
         if guardrails.detect_emergency(text):
@@ -69,10 +71,10 @@ async def handle_inbound(msg: IncomingMessage, channel: Channel | None = None) -
             s.commit()
             new_flags.append(flag)
         else:
-            reply, tool_flags = await _run_agent(s, patient, first_contact)
+            reply, tool_flags = await _run_agent(s, patient, first_contact, inbound.id)
             new_flags += tool_flags
 
-        await _send(s, channel, patient, guardrails.check_outbound(reply))
+        await _send(s, channel, patient, guardrails.check_outbound(reply), inbound.id)
         new_flags += evaluate_patient(patient.id, s)
         for f in new_flags:
             await notify_doctor(f)
@@ -102,7 +104,9 @@ def _find_patient(s: Session, msg: IncomingMessage) -> Patient | None:
     return None
 
 
-async def _run_agent(s: Session, patient: Patient, first_contact: bool) -> tuple[str, list[Flag]]:
+async def _run_agent(
+    s: Session, patient: Patient, first_contact: bool, message_id: int | None = None
+) -> tuple[str, list[Flag]]:
     messages = [{"role": "system", "content": build_system_prompt(s, patient, first_contact)}]
     messages += _history(s, patient.id)
     flags: list[Flag] = []
@@ -110,7 +114,7 @@ async def _run_agent(s: Session, patient: Patient, first_contact: bool) -> tuple
         try:
             result = await traced_completion(
                 patient_id=patient.id, trigger="inbound_message", messages=messages,
-                tools=TOOL_SPECS,
+                tools=TOOL_SPECS, message_id=message_id,
             )
         except Exception:
             log.exception("LLM call failed for patient %s", patient.id)
@@ -139,6 +143,8 @@ def build_system_prompt(s: Session, patient: Patient, first_contact: bool = Fals
         line = f"- {m.name}: {m.dose} at {m.times_of_day.replace(',', ', ')} ({course})"
         if m.instructions:
             line += f". {m.instructions}"
+        if m.paused:
+            line += ". (Paused by the doctor: no check-ins for now.)"
         regimen.append(line)
 
     now = utcnow()
@@ -190,19 +196,30 @@ def _history(s: Session, patient_id: int) -> list[dict]:
     return history
 
 
-async def _send(s: Session, channel, patient: Patient, text: str) -> None:
+async def _send(
+    s: Session, channel, patient: Patient, text: str, in_reply_to: int | None = None
+) -> None:
     msg_id = await channel.send_text(patient_address(patient), text)
     s.add(Message(patient_id=patient.id, direction=Direction.OUTBOUND, text=text,
-                  external_id=msg_id))
+                  external_id=msg_id, in_reply_to_id=in_reply_to))
     s.commit()
 
 
 def checkin_text(patient: Patient, items: list[tuple[DoseEvent, Medication]]) -> str:
+    first_name = patient.name.split()[0]
     when = to_local(items[0][0].scheduled_for).strftime("%-I:%M%p").lower()
+    custom = [m for _, m in items if m.checkin_message]
+    if len(items) == 1 and custom:
+        m = custom[0]
+        try:
+            return m.checkin_message.format(name=first_name, medication=m.name, dose=m.dose,
+                                            time=when)
+        except (KeyError, IndexError, ValueError):
+            return m.checkin_message  # unknown {placeholder}: send it as written
     meds = "; ".join(
         f"{m.name} ({m.dose}{', ' + m.instructions if m.instructions else ''})" for _, m in items
     )
-    return f"Hi {patient.name.split()[0]}, it's your {when} dose: {meds}. Have you taken it?"
+    return f"Hi {first_name}, it's your {when} dose: {meds}. Have you taken it?"
 
 
 async def run_checkin(patient_id: int, dose_event_ids: list[int]) -> None:
@@ -211,8 +228,8 @@ async def run_checkin(patient_id: int, dose_event_ids: list[int]) -> None:
     channel = get_channel()
     with new_session() as s:
         patient = s.get(Patient, patient_id)
-        items = [(e, s.get(Medication, e.medication_id))
-                 for e in (s.get(DoseEvent, i) for i in dose_event_ids) if e]
+        items = [(e, m) for e in (s.get(DoseEvent, i) for i in dose_event_ids) if e
+                 if (m := s.get(Medication, e.medication_id)) and not m.paused]
         if not patient or not items:
             return
         text = checkin_text(patient, items)

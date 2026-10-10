@@ -9,8 +9,10 @@ doctor before the next visit.
 ## Status
 
 The patient-facing agent works end to end on Telegram: message → guardrails → Gemini with
-tools → dose log → adherence rules → reply, plus scheduled check-ins at each dose time. The
-doctor dashboard and prescription photo parsing are still stubs. **Agents: start with
+tools → dose log → adherence rules → reply, plus scheduled check-ins at each dose time. A
+JSON API ([docs/API.md](docs/API.md), live at `/docs`) serves the doctor dashboard and the
+prescription form; the React frontend is being wired to it. Prescription photo parsing is
+still a stub. **Agents: start with
 [AGENTS.md](AGENTS.md) and [docs/HANDOFF.md](docs/HANDOFF.md).** See
 [the design doc](docs/superpowers/specs/2026-10-10-hermod-design.md).
 
@@ -18,8 +20,8 @@ doctor dashboard and prescription photo parsing are still stubs. **Agents: start
 
 - **Telegram Bot API**: patient chat, long polling (no public URL or tunnel needed)
 - **Gemini Flash Lite** via LiteLLM (free tier, tool calling)
-- **FastAPI**: app server + doctor dashboard
-- **SQLite / SQLModel**: dose log, messages, agent traces, flags
+- **FastAPI**: JSON API for the doctor dashboard (`/api`, docs at `/docs`)
+- **SQLite or Supabase Postgres / SQLModel**: dose log, messages, agent traces, flags
 - **APScheduler**: timed check-ins
 - **n8n** (optional, Docker): fan doctor alerts out to email/Slack
 
@@ -27,14 +29,14 @@ doctor dashboard and prescription photo parsing are still stubs. **Agents: start
 
 ```
 hermod/
+  api/         JSON API for the dashboard (routes, response schemas)
   channels/    Channel protocol, Telegram adapter, console adapter (dev/tests)
   agent/       agent loop, prompts, tools
   llm/         LiteLLM wrapper
   harness/     tracer (logs every LLM call), guardrails, alerts
   adherence/   deterministic rules -> flags
   scheduler/   timed check-ins
-  db/          models + session
-  dashboard/   doctor pages
+  db/          models, session (SQLite/Postgres), schema upkeep, copy tool
   demo.py      seed a synthetic patient, print their link, chat in the terminal
 ```
 
@@ -72,6 +74,23 @@ The patient opens their link and taps **Start**. Hermod links the chat to their 
 welcomes them, and checks in at every dose time while the server runs. If the patient had
 already started the bot before using the link, Telegram drops the code, so they can send the
 code (the part after `start=`) as a message instead.
+
+### Dashboard API
+
+With the server running, open `http://localhost:8000/docs` for every endpoint, or read
+[docs/API.md](docs/API.md). The React dev server (`localhost:5173`) is allowed by CORS.
+
+### Use Supabase instead of the local SQLite file
+
+1. Create a free project at https://supabase.com, choosing a region near you and saving the
+   database password.
+2. In the project, click **Connect** and copy the **Session pooler** URI (port 5432; the
+   direct connection is IPv6-only). Replace `[YOUR-PASSWORD]` with your database password.
+3. Copy existing local data across (keeps ids, so Telegram links keep working):
+   `python -m hermod.db.copy --to "<that URI>"`
+4. Set `DATABASE_URL=<that URI>` in `.env` and restart the server. Tables are created on
+   startup, new columns are added automatically, and row-level security is switched on so
+   Supabase's public Data API can't read patient data.
 
 ### Try the agent in the terminal
 

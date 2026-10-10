@@ -2,9 +2,14 @@ import os
 import tempfile
 
 # Must run before any hermod import: settings and the engine are built at import time.
-_fd, _db_path = tempfile.mkstemp(suffix=".db")
-os.close(_fd)
-os.environ["DATABASE_URL"] = f"sqlite:///{_db_path}"
+# TEST_DATABASE_URL runs the suite against another database (e.g. a local Postgres, to
+# check Supabase compatibility). Its tables are dropped and recreated per test.
+if os.environ.get("TEST_DATABASE_URL"):
+    os.environ["DATABASE_URL"] = os.environ["TEST_DATABASE_URL"]
+else:
+    _fd, _db_path = tempfile.mkstemp(suffix=".db")
+    os.close(_fd)
+    os.environ["DATABASE_URL"] = f"sqlite:///{_db_path}"
 os.environ["CHANNEL"] = "console"
 os.environ["TELEGRAM_BOT_TOKEN"] = ""
 os.environ["N8N_ALERT_WEBHOOK_URL"] = ""

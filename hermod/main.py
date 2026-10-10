@@ -3,11 +3,12 @@ import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from hermod.agent.agent import handle_inbound
+from hermod.api.routes import router as api_router
 from hermod.channels import get_channel
 from hermod.config import get_settings
-from hermod.dashboard.routes import router as dashboard_router
 from hermod.db.session import init_db
 from hermod.scheduler import jobs
 
@@ -31,8 +32,19 @@ async def lifespan(app: FastAPI):
     jobs.shutdown()
 
 
-app = FastAPI(title="Hermod", lifespan=lifespan)
-app.include_router(dashboard_router)
+app = FastAPI(
+    title="Hermod API",
+    description="Doctor dashboard API: patients, reminders, adherence, flags, conversation "
+                "and agent traces. JSON is camelCase.",
+    lifespan=lifespan,
+)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[o.strip() for o in get_settings().cors_origins.split(",") if o.strip()],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+app.include_router(api_router)
 
 
 @app.get("/health")

@@ -10,11 +10,13 @@ from hermod.llm.client import LLMResult
 
 
 async def traced_completion(
-    *, patient_id: int | None, trigger: str, messages: list[dict], tools: list[dict] | None
+    *, patient_id: int | None, trigger: str, messages: list[dict], tools: list[dict] | None,
+    message_id: int | None = None,
 ) -> LLMResult:
     """Call the LLM, persist prompt/output/tool calls/latency/error, return the result."""
     trace = AgentTrace(
         patient_id=patient_id,
+        message_id=message_id,
         trigger=trigger,
         model=get_settings().llm_model,
         prompt_json=json.dumps(messages, default=str),

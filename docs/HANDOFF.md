@@ -1,6 +1,6 @@
 # Handoff
 
-Last updated: Sat 10 Oct 2026, evening (build day 2 of 3). Submissions close **Mon 12 Oct, 9am AEDT**.
+Last updated: Sat 10 Oct 2026, night (build day 2 of 3). Submissions close **Mon 12 Oct, 9am AEDT**.
 
 ## Status in one paragraph
 
@@ -9,9 +9,11 @@ phone. A patient opens their personal start link, Hermod links the chat to their
 welcomes them, checks in at each dose time, logs what they report with tools, answers "did I
 already take it?" from the log, flags side effects and questions for the doctor, and sends
 overdose or emergency messages to a fixed escalation without the LLM. Every LLM call is traced.
-The two big remaining pieces are the **doctor dashboard** and **prescription entry** (patients
-are currently created with `python -m hermod.demo seed`). Teammate Ethan's `frontend/` has a
-medication-reminder form with demo data that isn't wired to the backend yet.
+The backend now also serves a **JSON API** for the doctor dashboard and the prescription
+form (patients, reminders, dose timeline, adherence, flags, conversation, agent traces); see
+[docs/API.md](API.md) or `/docs` on the running server. It runs on SQLite locally or on
+**Supabase Postgres** (tested against Postgres 15). The remaining work is the **frontend**:
+Ethan's `frontend/` has the medication-reminder form on demo data, to be wired to the API.
 
 ## The idea
 
@@ -43,9 +45,7 @@ lives in a messaging app).
 
 ## Open decisions
 
-1. **What `frontend/` is for.** It could be the public website (a required hackathon
-   deliverable), the doctor dashboard, or both. If the React app becomes the dashboard,
-   `hermod/dashboard/` should be a JSON API (`/api/...`) instead of Jinja pages. Ask the user or Ethan.
+1. **Public website** (a required hackathon deliverable): a separate page, or part of `frontend/`.
 2. **Demo person:** antibiotics (recommended) or chronic medication.
 3. **Prescription entry:** web form only, or also a photo parsed by Gemini vision (stretch goal).
 
@@ -67,16 +67,20 @@ lives in a messaging app).
 | `hermod/adherence/rules.py` | working | `evaluate_patient()` (missed streak, extra dose, daily max, unresponsive 24h), `adherence_summary()` |
 | `hermod/scheduler/jobs.py` | working | Minute tick: create DoseEvents, send due check-ins, mark no-reply doses `UNKNOWN` after 6h |
 | `hermod/demo.py` | working | `seed` / `link` / `chat` CLI |
-| `hermod/dashboard/routes.py` | empty router | Doctor views (see open decision 1) |
+| `hermod/api/routes.py` | working | `/api/...` endpoints (list in `docs/API.md`), optional `X-API-Key` |
+| `hermod/api/schemas.py`, `views.py` | working | camelCase response/request models; row → response builders |
+| `hermod/db/session.py` | working | SQLite/Postgres engine, `add_missing_columns()`, Supabase RLS lock-down |
+| `hermod/db/copy.py` | working | `python -m hermod.db.copy --to <url>`: copy all data, keeping ids |
 | `frontend/` | form, demo data | React 19 + Vite 8 + TypeScript medication-reminder form; not connected to the API |
-| `tests/` | 44 passing | Agent (LLM mocked), Telegram, guardrails, rules, scheduler, smoke |
+| `tests/` | 62 passing | API, agent (LLM mocked), Telegram, guardrails, rules, scheduler, DB upkeep. `TEST_DATABASE_URL=postgresql://...` runs them on Postgres |
 
 ## Next steps (suggested build order)
 
-1. **Doctor view:** patient list, dose timeline, % adherence (`adherence_summary()`), open flags,
-   and the `AgentTrace` for each message. Where it lives depends on open decision 1.
-2. **Prescription entry:** a form (or Ethan's frontend) that creates Patient, Prescription and
-   Medication rows, then shows the patient's Telegram start link or a QR code of it.
+1. **Wire the frontend to the API** (Ethan): the reminder form → `POST /api/patients/{id}/reminders`,
+   the patient's Telegram link/QR from `link.telegramLink`, and the doctor view from
+   `/api/dashboard`, `/api/patients/{id}`, `/adherence`, `/doses`, `/flags`, `/messages`,
+   `/api/traces/{id}`. Field mapping from the existing TypeScript types is in `docs/API.md`.
+2. **Move to Supabase** if the team needs a shared database (steps in the README).
 3. **Hand-over test:** someone unfamiliar does a 2-day course on their own phone. Seed them, send
    the link, and keep the server running.
 4. **Hackathon deliverables:** public website, 4-page deck, demo of 5 minutes or less (see the brief).
@@ -86,14 +90,19 @@ lives in a messaging app).
 
 - [x] Gemini API key in `.env` as `GEMINI_API_KEY`.
 - [x] Telegram bot from @BotFather, token in `.env` as `TELEGRAM_BOT_TOKEN`.
+- [ ] Supabase project, if using it: Session pooler URI in `.env` as `DATABASE_URL`.
 - [ ] Everyone on the team completes the Builders Survey (a submission requirement).
 
 ## Gotchas
 
 - Python 3.14 is not supported (`requires-python <3.14`). Use 3.13.
 - Check-ins only go out while `uvicorn` is running. Keep the machine awake during the hand-over test.
-- `create_all` doesn't add columns to existing tables. After a model change, migrate `hermod.db`
-  by hand or delete it and re-seed.
+- New model columns are added on startup (`add_missing_columns`), but renames and drops are not:
+  those need a hand migration on every existing database, including Supabase.
+- Use Supabase's **Session pooler** URI (port 5432). The direct connection is IPv6-only on the
+  free tier, and the transaction pooler (6543) doesn't suit a long-running server.
+- Reminder `pause` deletes upcoming doses and `resume` recreates them, so paused time isn't
+  counted as missed.
 - `httpx` logs request URLs at INFO, and Telegram URLs contain the bot token, so `main.py` keeps
   `httpx`/`httpcore` at WARNING. Don't lower that.
 - A `hermod-1/` folder may exist in some local checkouts. It's a teammate's second clone, so don't commit it.
