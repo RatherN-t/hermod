@@ -80,7 +80,8 @@ lives in a messaging app).
    the patient's Telegram link/QR from `link.telegramLink`, and the doctor view from
    `/api/dashboard`, `/api/patients/{id}`, `/adherence`, `/doses`, `/flags`, `/messages`,
    `/api/traces/{id}`. Field mapping from the existing TypeScript types is in `docs/API.md`.
-2. **Move to Supabase** if the team needs a shared database (steps in the README).
+2. **Shared database:** done. Live data is in Supabase (see setup below); the local
+   `hermod.db` is a stale copy from before the move.
 3. **Hand-over test:** someone unfamiliar does a 2-day course on their own phone. Seed them, send
    the link, and keep the server running.
 4. **Hackathon deliverables:** public website, 4-page deck, demo of 5 minutes or less (see the brief).
@@ -90,7 +91,10 @@ lives in a messaging app).
 
 - [x] Gemini API key in `.env` as `GEMINI_API_KEY`.
 - [x] Telegram bot from @BotFather, token in `.env` as `TELEGRAM_BOT_TOKEN`.
-- [ ] Supabase project, if using it: Session pooler URI in `.env` as `DATABASE_URL`.
+- [x] Supabase project `miumtcqtdncqqhgpqbrd` (Sydney, Postgres 17) holds the live data. Its
+      Session pooler URI is `DATABASE_URL` in the user's `.env` (ask the user for it privately;
+      it contains the DB password). `.mcp.json` adds the Supabase MCP server; each person runs
+      `claude /mcp` in a terminal to sign in.
 - [ ] Everyone on the team completes the Builders Survey (a submission requirement).
 
 ## Gotchas
