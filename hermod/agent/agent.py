@@ -36,6 +36,9 @@ from hermod.timeutil import fmt_local, to_local, utcnow
 log = logging.getLogger(__name__)
 
 MAX_TOOL_ROUNDS = 4
+# Emergency messages skip the LLM, so without this the next turn would see them unhandled.
+ESCALATION_NOTE = ("[Automatic safety reply. The doctor already has an URGENT flag for the "
+                   "previous message; don't log or flag it again.] ")
 HISTORY_LIMIT = 20
 
 
@@ -187,7 +190,9 @@ def _history(s: Session, patient_id: int) -> list[dict]:
         .order_by(col(Message.created_at).desc(), col(Message.id).desc()).limit(HISTORY_LIMIT)
     ).all()
     history = [
-        {"role": "user" if m.direction == Direction.INBOUND else "assistant", "content": m.text}
+        {"role": "user" if m.direction == Direction.INBOUND else "assistant",
+         "content": ESCALATION_NOTE + m.text if m.text == guardrails.ESCALATION_MESSAGE
+         else m.text}
         for m in reversed(rows)
     ]
     if history and history[0]["role"] == "assistant":

@@ -93,8 +93,9 @@ lives in a messaging app).
 - [x] Telegram bot from @BotFather, token in `.env` as `TELEGRAM_BOT_TOKEN`.
 - [x] Supabase project `miumtcqtdncqqhgpqbrd` (Sydney, Postgres 17) holds the live data. Its
       Session pooler URI is `DATABASE_URL` in the user's `.env` (ask the user for it privately;
-      it contains the DB password). `.mcp.json` adds the Supabase MCP server; each person runs
-      `claude /mcp` in a terminal to sign in.
+      it contains the DB password). `.mcp.json` adds the Supabase MCP server **read-only** (the DB holds
+      patient messages, which are untrusted text, so agents shouldn't get write access through
+      it); each person runs `claude /mcp` in a terminal to sign in.
 - [ ] Everyone on the team completes the Builders Survey (a submission requirement).
 
 ## Gotchas

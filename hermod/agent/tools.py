@@ -115,9 +115,14 @@ def _log_dose(session: Session, patient_id: int, args: dict) -> dict:
     if med is None:
         return {"ok": False, "error": f"No active medication matches {args.get('medication')!r}"}
 
-    if status == DoseStatus.EXTRA and event is None:
+    if status == DoseStatus.EXTRA:
+        # An extra dose is a new entry; it never rewrites a scheduled dose.
         event = DoseEvent(medication_id=med.id, patient_id=patient_id, scheduled_for=at)
         session.add(event)
+    elif event is not None and event.status not in (DoseStatus.PENDING, DoseStatus.UNKNOWN):
+        # Never overwrite what the patient already reported (the doctor reads this as fact).
+        return {"ok": False, "error": f"Dose {event.id} is already logged as "
+                f"{event.status} ({fmt_local(event.scheduled_for)}); don't log it again"}
     elif event is None:
         # Closest open dose that is already due (or nearly).
         candidates = session.exec(

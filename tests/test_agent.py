@@ -112,3 +112,43 @@ async def test_checkin_sends_text_and_marks_dose(patient, session, channel):
     assert "Amoxicillin 500mg" in channel.sent[-1]["text"]
     session.refresh(dose)
     assert dose.checkin_sent_at is not None
+
+
+async def test_extra_dose_never_overwrites_a_taken_dose(patient, session, llm):
+    dose = session.exec(select(DoseEvent)).one()
+    dose.status = DoseStatus.TAKEN
+    session.add(dose)
+    session.commit()
+    llm(
+        LLMResult(text="", tool_calls=[call("log_dose", dose_id=dose.id, medication="Amoxicillin",
+                                            status="extra")]),
+        LLMResult(text="Noted."),
+    )
+    await handle_inbound(inbound("took another one by mistake"))
+    session.refresh(dose)
+    assert dose.status == DoseStatus.TAKEN
+    assert session.exec(select(DoseEvent).where(DoseEvent.status == "extra")).one()
+
+
+def test_log_dose_refuses_to_overwrite_reported_dose(patient, session):
+    from hermod.agent.tools import execute_tool
+
+    dose = session.exec(select(DoseEvent)).one()
+    dose.status = DoseStatus.TAKEN
+    session.add(dose)
+    session.commit()
+    out = execute_tool("log_dose", {"dose_id": dose.id, "medication": "Amoxicillin",
+                                    "status": "missed"}, patient.id, session)
+    assert out["ok"] is False and "already logged" in out["error"]
+    session.refresh(dose)
+    assert dose.status == DoseStatus.TAKEN
+
+
+async def test_escalation_is_marked_handled_in_next_turn(patient, llm):
+    llm()
+    await handle_inbound(inbound("I took the whole pack", mid="e1"))
+    fake = llm(LLMResult(text="You logged..."))
+    await handle_inbound(inbound("did I take my meds today?", mid="e2"))
+    history = fake.calls[0]
+    escalation = [m for m in history if m["role"] == "assistant"][-1]["content"]
+    assert escalation.startswith("[Automatic safety reply.") and ESCALATION_MESSAGE in escalation
