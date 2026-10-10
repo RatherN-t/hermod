@@ -1,69 +1,85 @@
 import { useRef, useState } from 'react'
 import { Plus } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { addDays, reminderDays } from '@/lib/schedule'
+import { api, errorMessage, type Reminder } from '@/lib/api'
+import { addDays } from '@/lib/schedule'
 import { ActiveReminderRow } from './ActiveReminderRow'
-import { draftFromReminder, emptyDraft } from './draft'
+import { courseBase, createBody, draftFromReminder, emptyDraft, updateBody } from './draft'
 import { ReminderForm } from './ReminderForm'
-import type { ActiveReminder, DemoPatient, IsoDate, ReminderDraft, ReminderStatus } from './types'
+import type { IsoDate, ReminderDraft, ReminderPatient } from './types'
 
 interface Props {
-  patient: DemoPatient
+  patient: ReminderPatient
   today: IsoDate
-  initialReminders: ActiveReminder[]
+  reminders: Reminder[]
+  /** Refetch the patient after a write so the reminders and dose numbers update. */
+  onChanged: () => Promise<void>
 }
 
-type FormState = { mode: 'new'; key: number } | { mode: 'edit'; id: string; key: number } | null
+type FormState = { mode: 'new'; key: number } | { mode: 'edit'; id: number; key: number } | null
 
-export function MedicationRemindersSection({ patient, today, initialReminders }: Props) {
-  const [reminders, setReminders] = useState<ActiveReminder[]>(initialReminders)
+export function MedicationRemindersSection({ patient, today, reminders, onChanged }: Props) {
   const [form, setForm] = useState<FormState>(null)
+  const [saving, setSaving] = useState(false)
+  const [submitError, setSubmitError] = useState<string | null>(null)
+  const [pausing, setPausing] = useState<number | null>(null)
+  const [rowError, setRowError] = useState<{ id: number; message: string } | null>(null)
   const [announcement, setAnnouncement] = useState('')
   const addButton = useRef<HTMLButtonElement>(null)
 
   const editing = form?.mode === 'edit' ? reminders.find((r) => r.id === form.id) : undefined
-  const taken = reminders.filter((r) => r.id !== editing?.id).map((r) => r.name)
+  const options = [...new Set(reminders.map((r) => r.name))]
+  const taken = reminders.filter((r) => r.status !== 'ended' && r.id !== editing?.id).map((r) => r.name)
   const nextKey = (form?.key ?? 0) + 1
+
+  function openForm(next: FormState) {
+    setSubmitError(null)
+    setForm(next)
+  }
 
   function closeForm() {
     setForm(null)
+    setSubmitError(null)
     // The form unmounts; send keyboard focus somewhere sensible instead of <body>.
     requestAnimationFrame(() => addButton.current?.focus())
   }
 
-  function handleSubmit(draft: ReminderDraft, end: IsoDate) {
-    const fields = {
-      name: draft.name.trim(),
-      timesOfDay: [...draft.timesOfDay].sort(),
-      durationKind: draft.durationKind,
-      durationDays: draft.durationDays,
-      untilDate: draft.untilDate,
-      endDate: end,
-      totalDoses: draft.timesOfDay.length * reminderDays(today, end),
-      language: draft.language,
-      customMessage: draft.customMessage === null ? null : draft.customMessage.trim(),
-      alertOnMissed: draft.alertOnMissed,
-      waPhone: draft.waPhone,
+  async function handleSubmit(draft: ReminderDraft) {
+    const name = draft.name.trim()
+    setSaving(true)
+    setSubmitError(null)
+    try {
+      if (editing) {
+        const body = updateBody(draftFromReminder(editing), draft)
+        if (Object.keys(body).length > 0) await api.updateReminder(editing.id, body)
+        await onChanged()
+        setAnnouncement(`Reminders for ${name} updated.`)
+      } else {
+        await api.createReminder(patient.id, createBody(draft, today))
+        await onChanged()
+        setAnnouncement(`Reminders for ${name} started.`)
+      }
+      closeForm()
+    } catch (e) {
+      setSubmitError(errorMessage(e))
+    } finally {
+      setSaving(false)
     }
-    if (editing) {
-      setReminders((list) => list.map((r) => (r.id === editing.id ? { ...r, ...fields } : r)))
-      setAnnouncement(`Reminders for ${fields.name} updated.`)
-    } else {
-      setReminders((list) => [
-        ...list,
-        { ...fields, id: `rem-${Date.now()}`, startDate: addDays(today, 1), dosesSent: 0, dosesConfirmed: 0, status: 'active' },
-      ])
-      setAnnouncement(`Reminders for ${fields.name} started.`)
-    }
-    closeForm()
   }
 
-  function togglePause(id: string) {
-    const target = reminders.find((r) => r.id === id)
-    if (!target) return
-    const status: ReminderStatus = target.status === 'paused' ? 'active' : 'paused'
-    setReminders((list) => list.map((r) => (r.id === id ? { ...r, status } : r)))
-    setAnnouncement(`Reminders for ${target.name} ${status === 'paused' ? 'paused' : 'resumed'}.`)
+  async function togglePause(target: Reminder) {
+    const status = target.status === 'paused' ? 'active' : 'paused'
+    setPausing(target.id)
+    setRowError(null)
+    try {
+      await api.updateReminder(target.id, { status })
+      await onChanged()
+      setAnnouncement(`Reminders for ${target.name} ${status === 'paused' ? 'paused' : 'resumed'}.`)
+    } catch (e) {
+      setRowError({ id: target.id, message: errorMessage(e) })
+    } finally {
+      setPausing(null)
+    }
   }
 
   return (
@@ -73,7 +89,7 @@ export function MedicationRemindersSection({ patient, today, initialReminders }:
           Medication reminders
         </h2>
         {!form && (
-          <Button ref={addButton} variant="secondary" onClick={() => setForm({ mode: 'new', key: nextKey })}>
+          <Button ref={addButton} variant="secondary" onClick={() => openForm({ mode: 'new', key: nextKey })}>
             <Plus aria-hidden="true" />
             Add medication
           </Button>
@@ -88,8 +104,10 @@ export function MedicationRemindersSection({ patient, today, initialReminders }:
               reminder={r}
               today={today}
               editing={editing?.id === r.id}
-              onTogglePause={() => togglePause(r.id)}
-              onEdit={() => setForm({ mode: 'edit', id: r.id, key: nextKey })}
+              busy={pausing === r.id}
+              error={rowError?.id === r.id ? rowError.message : null}
+              onTogglePause={() => void togglePause(r)}
+              onEdit={() => openForm({ mode: 'edit', id: r.id, key: nextKey })}
             />
           ))}
         </ul>
@@ -102,10 +120,15 @@ export function MedicationRemindersSection({ patient, today, initialReminders }:
           key={form.key}
           patient={patient}
           today={today}
+          base={courseBase(today, editing)}
+          minEnd={editing ? today : addDays(today, 1)}
           mode={editing ? 'edit' : 'new'}
-          initial={editing ? draftFromReminder(editing, patient) : emptyDraft(patient)}
+          initial={editing ? draftFromReminder(editing) : emptyDraft(patient)}
+          options={options}
           taken={taken}
-          onSubmit={handleSubmit}
+          saving={saving}
+          submitError={submitError}
+          onSubmit={(draft) => void handleSubmit(draft)}
           onCancel={closeForm}
         />
       )}

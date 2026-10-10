@@ -1,9 +1,24 @@
-import type { AdherenceSummary } from '@/lib/adherence'
+import { adherencePercent, type AdherenceSummary } from '@/lib/adherence'
 
-export function AdherenceCard({ summary }: { summary: AdherenceSummary }) {
-  const { taken, due, prescribed } = summary
-  const pct = due ? Math.round((taken / due) * 100) : 0
+/** `prescribed` is every dose across the patient's courses (sum of the reminders' totalDoses). */
+export function AdherenceCard({ summary, prescribed }: { summary: AdherenceSummary; prescribed: number }) {
+  const { taken, due } = summary
+  const pct = adherencePercent(summary)
   const missed = due - taken
+
+  if (due === 0) {
+    return (
+      <section aria-labelledby="adherence-heading" className="rounded-xl border border-border bg-surface p-4">
+        <h2 id="adherence-heading" className="text-helper text-muted">
+          Doses taken
+        </h2>
+        <p className="mt-1 text-sm text-ink">No doses yet</p>
+        <p className="mt-1 text-helper text-muted tabular-nums">
+          {prescribed > 0 ? `${prescribed} prescribed in total` : 'Add a medication to start tracking.'}
+        </p>
+      </section>
+    )
+  }
 
   return (
     <section aria-labelledby="adherence-heading" className="rounded-xl border border-border bg-surface p-4">

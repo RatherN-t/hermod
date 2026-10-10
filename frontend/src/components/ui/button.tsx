@@ -14,6 +14,8 @@ const buttonVariants = cva(
         primary: 'bg-accent text-white hover:bg-accent-hover aria-disabled:hover:bg-accent',
         secondary: 'border border-border bg-surface text-ink hover:bg-subtle hover:border-border-strong',
         ghost: 'text-ink hover:bg-subtle',
+        /** Destructive actions only (e.g. confirming a delete). */
+        danger: 'bg-danger text-white hover:bg-danger/90 aria-disabled:hover:bg-danger',
         link: 'text-accent hover:underline underline-offset-4',
       },
       size: {

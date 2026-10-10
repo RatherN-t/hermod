@@ -1,13 +1,22 @@
-import { endDate, formatTime } from '@/lib/schedule'
+import { daysBetween, endDate, formatTime } from '@/lib/schedule'
 import type { IsoDate, ReminderDraft } from './types'
 
-export type FieldKey = 'name' | 'times' | 'duration' | 'message' | 'phone' | 'consent'
+export type FieldKey = 'name' | 'times' | 'duration' | 'message' | 'consent'
 export type FieldErrors = Partial<Record<FieldKey, string>>
 
-export const MAX_DAYS = 90
+/** Longest course the API accepts for "Number of days". */
+export const MAX_DAYS = 180
 export const MESSAGE_MAX = 500
 
-export function validateDraft(draft: ReminderDraft, ctx: { today: IsoDate; nextAppointment: IsoDate }): FieldErrors {
+export interface ValidationContext {
+  /** Day before the course's first day (see `courseBase`). */
+  base: IsoDate
+  /** Earliest allowed last day. */
+  minEnd: IsoDate
+  nextAppointment: IsoDate | null
+}
+
+export function validateDraft(draft: ReminderDraft, ctx: ValidationContext): FieldErrors {
   const errors: FieldErrors = {}
 
   if (!draft.name.trim()) errors.name = 'Choose a medication or type its name.'
@@ -24,18 +33,21 @@ export function validateDraft(draft: ReminderDraft, ctx: { today: IsoDate; nextA
     }
   }
 
-  if (draft.durationKind === 'days') {
+  const end = endDate(
+    { kind: draft.durationKind, days: draft.durationDays, untilDate: draft.untilDate, nextAppointment: ctx.nextAppointment ?? '' },
+    ctx.base,
+  )
+  if (draft.durationKind === 'appointment') {
+    if (!ctx.nextAppointment) errors.duration = 'No appointment is booked. Choose another option.'
+  } else if (draft.durationKind === 'days') {
     if (!Number.isInteger(draft.durationDays) || draft.durationDays < 1 || draft.durationDays > MAX_DAYS) {
       errors.duration = `Enter a number of days from 1 to ${MAX_DAYS}.`
+    } else if (end && daysBetween(ctx.minEnd, end) < 0) {
+      errors.duration = 'That would end the course before today. Choose more days.'
     }
-  } else if (draft.durationKind === 'date') {
+  } else {
     if (!draft.untilDate) errors.duration = 'Pick the last day of reminders.'
-    else if (!endDate({ kind: 'date', days: 0, untilDate: draft.untilDate, nextAppointment: ctx.nextAppointment }, ctx.today))
-      errors.duration = 'Pick a date after today.'
-  }
-
-  if (draft.phoneEdited && draft.waPhone.replace(/\D/g, '').length < 10) {
-    errors.phone = 'Enter a full phone number, including area code.'
+    else if (!end || daysBetween(ctx.minEnd, end) < 0) errors.duration = 'Pick a date after today.'
   }
 
   if (draft.customMessage !== null) {

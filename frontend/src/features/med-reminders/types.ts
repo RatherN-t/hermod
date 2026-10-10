@@ -1,7 +1,7 @@
 /**
- * Front-end shapes for medication reminders. Field names follow the backend
- * (`hermod/db/models.py`): Medication.name, Medication.times_of_day,
- * Prescription.end_date, Patient.wa_phone, DoseEvent.status.
+ * Front-end shapes for medication reminders. The draft maps onto
+ * `POST /api/patients/{id}/reminders` (see docs/API.md); saved reminders use the API's
+ * `Reminder` type from `@/lib/api`.
  */
 
 /** ISO calendar date, e.g. "2026-10-17". */
@@ -12,54 +12,24 @@ export type TimeOfDay = string
 
 export type DurationKind = 'appointment' | 'days' | 'date'
 
-export type MessageLanguage = 'en' | 'es'
-
 export interface ReminderDraft {
-  /** Medication.name */
   name: string
-  /** Medication.times_of_day, split. Joined with "," when sent to the API. */
   timesOfDay: TimeOfDay[]
   durationKind: DurationKind
   durationDays: number
   /** Only used when durationKind === 'date' */
   untilDate: IsoDate | ''
-  /** Patient.wa_phone, as displayed */
-  waPhone: string
-  phoneEdited: boolean
+  /** Kept client-side; never sent to the API. */
   consent: boolean
-  language: MessageLanguage
   /** Patient-facing reminder text. null = the standard message. */
   customMessage: string | null
   alertOnMissed: boolean
 }
 
-export type ReminderStatus = 'active' | 'paused'
-
-export interface ActiveReminder {
-  id: string
-  name: string
-  timesOfDay: TimeOfDay[]
-  durationKind: DurationKind
-  durationDays: number
-  untilDate: IsoDate | ''
-  startDate: IsoDate
-  /** Prescription.end_date */
-  endDate: IsoDate
-  /** Doses sent so far, and how many of those the patient marked "Taken" (DoseEvent.status) */
-  dosesSent: number
-  dosesConfirmed: number
-  totalDoses: number
-  status: ReminderStatus
-  language: MessageLanguage
-  customMessage: string | null
-  alertOnMissed: boolean
-  waPhone: string
-}
-
-export interface DemoPatient {
+/** What the reminder form needs to know about the patient. */
+export interface ReminderPatient {
+  id: number
   firstName: string
-  fullName: string
-  waPhone: string
-  currentMedications: string[]
-  nextAppointment: { date: IsoDate; clinician: string }
+  /** Clinic-local date of the next booked appointment, or null when none is booked. */
+  nextAppointment: { date: IsoDate; clinician: string } | null
 }

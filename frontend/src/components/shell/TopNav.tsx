@@ -2,7 +2,7 @@ import { Plus } from 'lucide-react'
 import { patientsHref } from '@/lib/router'
 import { cn, focusRing } from '@/lib/utils'
 
-export function TopNav({ doctorName }: { doctorName: string }) {
+export function TopNav() {
   return (
     <header className="border-b border-border bg-surface">
       <div className="mx-auto flex h-16 max-w-[1120px] items-center justify-between gap-4 px-4 md:px-6">
@@ -12,7 +12,6 @@ export function TopNav({ doctorName }: { doctorName: string }) {
           </span>
           <span className="text-lg font-medium tracking-tight text-ink">everwell</span>
         </a>
-        <p className="text-sm font-medium text-ink">{doctorName}</p>
       </div>
     </header>
   )

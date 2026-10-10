@@ -1,35 +1,75 @@
-import { defaultTimes } from '@/lib/schedule'
-import type { ActiveReminder, DemoPatient, ReminderDraft } from './types'
+import type { Reminder, ReminderCreate, ReminderUpdate } from '@/lib/api'
+import { clinicDate } from '@/lib/clinic-time'
+import { addDays, defaultTimes } from '@/lib/schedule'
+import type { IsoDate, ReminderDraft, ReminderPatient } from './types'
 
-export function emptyDraft(patient: DemoPatient): ReminderDraft {
+export function emptyDraft(patient: ReminderPatient): ReminderDraft {
   return {
     name: '',
     timesOfDay: defaultTimes(2),
-    durationKind: 'appointment',
+    durationKind: patient.nextAppointment ? 'appointment' : 'days',
     durationDays: 7,
     untilDate: '',
-    waPhone: patient.waPhone,
-    phoneEdited: false,
     consent: false,
-    language: 'en',
     customMessage: null,
     alertOnMissed: true,
   }
 }
 
-export function draftFromReminder(r: ActiveReminder, patient: DemoPatient): ReminderDraft {
+export function draftFromReminder(r: Reminder): ReminderDraft {
   return {
     name: r.name,
     timesOfDay: [...r.timesOfDay],
     durationKind: r.durationKind,
-    durationDays: r.durationDays,
-    untilDate: r.untilDate,
-    waPhone: r.waPhone,
-    phoneEdited: r.waPhone !== patient.waPhone,
+    durationDays: r.durationDays ?? 7,
+    untilDate: r.durationKind === 'date' ? clinicDate(r.endDate) : '',
     // Consent was recorded when the reminder was first started.
     consent: true,
-    language: r.language,
     customMessage: r.customMessage,
     alertOnMissed: r.alertOnMissed,
   }
+}
+
+/**
+ * The day before the course's first day. Day counts and the summary are measured from it:
+ * new reminders start tomorrow, so it's today; an edited course keeps its original start.
+ */
+export function courseBase(today: IsoDate, editing?: Reminder): IsoDate {
+  return editing ? addDays(clinicDate(editing.startDate), -1) : today
+}
+
+const durationFields = (d: ReminderDraft) => ({
+  durationKind: d.durationKind,
+  ...(d.durationKind === 'days' ? { durationDays: d.durationDays } : {}),
+  ...(d.durationKind === 'date' ? { untilDate: d.untilDate } : {}),
+})
+
+export function createBody(d: ReminderDraft, today: IsoDate): ReminderCreate {
+  return {
+    name: d.name.trim(),
+    timesOfDay: [...d.timesOfDay].sort(),
+    ...durationFields(d),
+    // Reminders start the day after setup, matching the schedule summary in the form.
+    startDate: addDays(today, 1),
+    customMessage: d.customMessage === null ? null : d.customMessage.trim(),
+    alertOnMissed: d.alertOnMissed,
+  }
+}
+
+/** Only the fields that changed, for `PATCH /api/reminders/{id}`. */
+export function updateBody(before: ReminderDraft, d: ReminderDraft): ReminderUpdate {
+  const body: ReminderUpdate = {}
+  const times = [...d.timesOfDay].sort()
+  if (times.join() !== [...before.timesOfDay].sort().join()) body.timesOfDay = times
+
+  const durationChanged =
+    d.durationKind !== before.durationKind ||
+    (d.durationKind === 'days' && d.durationDays !== before.durationDays) ||
+    (d.durationKind === 'date' && d.untilDate !== before.untilDate)
+  if (durationChanged) Object.assign(body, durationFields(d))
+
+  const message = d.customMessage === null ? null : d.customMessage.trim()
+  if (message !== before.customMessage) body.customMessage = message ?? ''
+  if (d.alertOnMissed !== before.alertOnMissed) body.alertOnMissed = d.alertOnMissed
+  return body
 }

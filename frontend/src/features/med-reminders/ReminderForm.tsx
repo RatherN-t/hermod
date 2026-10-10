@@ -9,36 +9,47 @@ import { fieldDescribedBy } from './fields/described-by'
 import { MedicationCombobox } from './fields/MedicationCombobox'
 import { MessageField } from './fields/MessageField'
 import { TimesPerDay } from './fields/TimesPerDay'
-import type { DemoPatient, IsoDate, ReminderDraft } from './types'
+import type { IsoDate, ReminderDraft, ReminderPatient } from './types'
 import { validateDraft, type FieldKey } from './validation'
 
 interface ReminderFormProps {
-  patient: DemoPatient
+  patient: ReminderPatient
   today: IsoDate
+  /** Day before the course's first day; day counts and the summary are measured from it. */
+  base: IsoDate
+  /** Earliest allowed last day of reminders. */
+  minEnd: IsoDate
   initial: ReminderDraft
   mode: 'new' | 'edit'
+  /** Medication names to suggest. */
+  options: string[]
   /** Medications that already have a reminder and can't be picked again. */
   taken: string[]
-  onSubmit: (draft: ReminderDraft, end: IsoDate) => void
+  saving: boolean
+  /** Error from the API for the last submit. */
+  submitError: string | null
+  onSubmit: (draft: ReminderDraft) => void
   onCancel: () => void
 }
 
-export function ReminderForm({ patient, today, initial, mode, taken, onSubmit, onCancel }: ReminderFormProps) {
+export function ReminderForm(props: ReminderFormProps) {
+  const { patient, today, base, minEnd, initial, mode, options, taken, saving, submitError, onSubmit, onCancel } = props
   const [draft, setDraft] = useState<ReminderDraft>(initial)
   const [touched, setTouched] = useState<Partial<Record<FieldKey, boolean>>>({})
   const [submitAttempted, setSubmitAttempted] = useState(false)
 
-  const errors = validateDraft(draft, { today, nextAppointment: patient.nextAppointment.date })
+  const nextAppointment = patient.nextAppointment?.date ?? null
+  const errors = validateDraft(draft, { base, minEnd, nextAppointment })
   const isValid = Object.keys(errors).length === 0
   const shown = (key: FieldKey) => (touched[key] || submitAttempted ? (errors[key] ?? null) : null)
   const touch = (key: FieldKey) => setTouched((t) => (t[key] ? t : { ...t, [key]: true }))
   const update = (patch: Partial<ReminderDraft>) => setDraft((d) => ({ ...d, ...patch }))
 
   const end = endDate(
-    { kind: draft.durationKind, days: draft.durationDays, untilDate: draft.untilDate, nextAppointment: patient.nextAppointment.date },
-    today,
+    { kind: draft.durationKind, days: draft.durationDays, untilDate: draft.untilDate, nextAppointment: nextAppointment ?? '' },
+    base,
   )
-  const sentence = summarySentence({ firstName: patient.firstName, times: draft.timesOfDay, today, end })
+  const sentence = summarySentence({ firstName: patient.firstName, times: draft.timesOfDay, today: base, end })
 
   const nameError = shown('name')
   const timesError = shown('times')
@@ -49,12 +60,14 @@ export function ReminderForm({ patient, today, initial, mode, taken, onSubmit, o
     <form
       noValidate
       aria-label={mode === 'edit' ? `Edit reminders for ${draft.name}` : 'New medication reminder'}
+      aria-busy={saving || undefined}
       className="rounded-xl border border-border bg-surface"
       onSubmit={(e) => {
         e.preventDefault()
+        if (saving) return
         setSubmitAttempted(true)
         if (isValid && end) {
-          onSubmit(draft, end)
+          onSubmit(draft)
           return
         }
         // Move keyboard and screen-reader users to the first field that needs attention.
@@ -65,7 +78,12 @@ export function ReminderForm({ patient, today, initial, mode, taken, onSubmit, o
       <div className="flex flex-col gap-5 p-4 md:p-6">
         <h3 className="text-base font-medium text-ink">{mode === 'edit' ? `Edit ${initial.name}` : 'New reminder'}</h3>
 
-        <Field id="reminder-medication" label="Medication" error={nameError}>
+        <Field
+          id="reminder-medication"
+          label="Medication"
+          error={nameError}
+          helper={mode === 'edit' ? 'To switch medication, add a new reminder.' : undefined}
+        >
           <MedicationCombobox
             id="reminder-medication"
             value={draft.name}
@@ -81,10 +99,11 @@ export function ReminderForm({ patient, today, initial, mode, taken, onSubmit, o
               }))
             }
             onClose={() => touch('name')}
-            options={patient.currentMedications}
+            options={options}
             taken={taken}
+            disabled={mode === 'edit'}
             invalid={!!nameError}
-            describedBy={fieldDescribedBy('reminder-medication', { error: nameError })}
+            describedBy={fieldDescribedBy('reminder-medication', { helper: mode === 'edit', error: nameError })}
           />
         </Field>
 
@@ -108,6 +127,8 @@ export function ReminderForm({ patient, today, initial, mode, taken, onSubmit, o
           <DurationCards
             id="reminder-duration"
             today={today}
+            base={base}
+            minEnd={minEnd}
             kind={draft.durationKind}
             days={draft.durationDays}
             untilDate={draft.untilDate}
@@ -144,7 +165,7 @@ export function ReminderForm({ patient, today, initial, mode, taken, onSubmit, o
               aria-describedby={consentError ? 'reminder-consent-error' : undefined}
             />
             <Label htmlFor="reminder-consent" className="font-normal">
-              {patient.firstName} agreed to Telegram reminders at <span className="tabular-nums">{draft.waPhone}</span>
+              {patient.firstName} agreed to get medication reminders on Telegram
             </Label>
           </div>
           {consentError && <FieldError id="reminder-consent-error">{consentError}</FieldError>}
@@ -152,16 +173,23 @@ export function ReminderForm({ patient, today, initial, mode, taken, onSubmit, o
       </div>
 
       <div className="flex flex-col gap-3 border-t border-border px-4 py-3 sm:flex-row sm:items-center sm:justify-between md:px-6">
-        <p aria-live="polite" className="text-helper text-muted" data-testid="reminder-summary">
-          {sentence}
-        </p>
+        <div className="flex flex-col gap-2">
+          <p aria-live="polite" className="text-helper text-muted" data-testid="reminder-summary">
+            {sentence}
+          </p>
+          {submitError && (
+            <div role="alert">
+              <FieldError id="reminder-submit-error">{submitError}</FieldError>
+            </div>
+          )}
+        </div>
         <div className="grid shrink-0 grid-cols-2 gap-2 sm:flex">
           <Button variant="secondary" onClick={onCancel}>
             Cancel
           </Button>
           {/* aria-disabled (not disabled) keeps it focusable; the submit handler blocks it and reveals inline errors. */}
-          <Button type="submit" variant="primary" aria-disabled={!isValid || undefined}>
-            {mode === 'edit' ? 'Save changes' : 'Start reminders'}
+          <Button type="submit" variant="primary" aria-disabled={!isValid || saving || undefined}>
+            {saving ? (mode === 'edit' ? 'Saving…' : 'Starting…') : mode === 'edit' ? 'Save changes' : 'Start reminders'}
           </Button>
         </div>
       </div>

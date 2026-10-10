@@ -11,10 +11,14 @@ import { MAX_DAYS } from '../validation'
 interface DurationCardsProps {
   id: string
   today: IsoDate
+  /** Day before the course's first day; "Number of days" counts from it. */
+  base: IsoDate
+  /** Earliest allowed last day. */
+  minEnd: IsoDate
   kind: DurationKind
   days: number
   untilDate: IsoDate | ''
-  nextAppointment: { date: IsoDate; clinician: string }
+  nextAppointment: { date: IsoDate; clinician: string } | null
   onKindChange: (kind: DurationKind) => void
   onDaysChange: (days: number) => void
   onDateChange: (date: IsoDate | '') => void
@@ -24,7 +28,7 @@ interface DurationCardsProps {
 }
 
 export function DurationCards(props: DurationCardsProps) {
-  const { id, today, kind, days, untilDate, nextAppointment, onKindChange, onDaysChange, onDateChange, onBlur } = props
+  const { id, today, base, minEnd, kind, days, untilDate, nextAppointment, onKindChange, onDaysChange, onDateChange, onBlur } = props
   const validDays = Number.isInteger(days) && days >= 1 && days <= MAX_DAYS
 
   return (
@@ -40,13 +44,19 @@ export function DurationCards(props: DurationCardsProps) {
         value="appointment"
         checked={kind === 'appointment'}
         title="Until next appointment"
-        detail={`${formatDate(nextAppointment.date, today, { weekday: true, forceYear: true })} with ${nextAppointment.clinician}`}
+        detail={
+          nextAppointment
+            ? `${formatDate(nextAppointment.date, today, { weekday: true, forceYear: true })} with ${nextAppointment.clinician}`
+            : 'No appointment booked'
+        }
+        disabled={!nextAppointment}
+        invalid={props.invalid && kind === 'appointment'}
       />
       <DurationCard
         value="days"
         checked={kind === 'days'}
         title="Number of days"
-        detail={validDays ? `Ends ${formatDate(addDays(today, days), today, { weekday: true })}` : `1 to ${MAX_DAYS} days`}
+        detail={validDays ? `Ends ${formatDate(addDays(base, days), today, { weekday: true })}` : `1 to ${MAX_DAYS} days`}
         invalid={props.invalid && kind === 'days'}
         control={
           <DayStepper
@@ -70,7 +80,7 @@ export function DurationCards(props: DurationCardsProps) {
           <Input
             type="date"
             aria-label="Last day of reminders"
-            min={addDays(today, 1)}
+            min={minEnd}
             value={untilDate}
             onChange={(e) => {
               onKindChange('date')
@@ -93,6 +103,7 @@ function DurationCard({
   detail,
   control,
   invalid,
+  disabled,
 }: {
   value: DurationKind
   checked: boolean
@@ -100,6 +111,7 @@ function DurationCard({
   detail: string
   control?: React.ReactNode
   invalid?: boolean
+  disabled?: boolean
 }) {
   const titleId = `duration-${value}-title`
   const detailId = `duration-${value}-detail`
@@ -107,7 +119,8 @@ function DurationCard({
     <div
       className={cn(
         'relative flex min-h-14 flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border px-3 py-2 transition-colors duration-150',
-        checked ? 'border-accent bg-accent-soft' : 'border-border bg-surface hover:border-border-strong',
+        checked ? 'border-accent bg-accent-soft' : 'border-border bg-surface',
+        disabled ? 'bg-subtle' : !checked && 'hover:border-border-strong',
         invalid && 'border-danger',
       )}
     >
@@ -116,12 +129,13 @@ function DurationCard({
         value={value}
         aria-labelledby={titleId}
         aria-describedby={detailId}
-        className={cn('absolute inset-0 rounded-lg', focusRing)}
+        disabled={disabled}
+        className={cn('absolute inset-0 rounded-lg disabled:cursor-not-allowed', focusRing)}
       />
       <div className="pointer-events-none flex min-w-48 flex-1 items-center gap-3">
         <RadioDot checked={checked} />
         <div className="min-w-0">
-          <p id={titleId} className="text-sm font-medium text-ink">
+          <p id={titleId} className={cn('text-sm font-medium', disabled ? 'text-muted' : 'text-ink')}>
             {title}
           </p>
           <p id={detailId} className="text-helper text-muted">
@@ -172,7 +186,7 @@ function DayStepper({
         aria-invalid={invalid || undefined}
         value={Number.isFinite(value) && value > 0 ? String(value) : ''}
         onChange={(e) => {
-          const digits = e.target.value.replace(/\D/g, '').slice(0, 2)
+          const digits = e.target.value.replace(/\D/g, '').slice(0, 3)
           onChange(digits ? Number(digits) : Number.NaN)
         }}
         onBlur={onBlur}

@@ -13,6 +13,7 @@ interface MedicationComboboxProps {
   /** Medications that already have an active reminder (cannot be picked again). */
   taken: string[]
   invalid?: boolean
+  disabled?: boolean
   describedBy?: string
 }
 
@@ -24,6 +25,7 @@ export function MedicationCombobox({
   options,
   taken,
   invalid,
+  disabled,
   describedBy,
 }: MedicationComboboxProps) {
   const [open, setOpen] = useState(false)
@@ -60,6 +62,7 @@ export function MedicationCombobox({
           aria-invalid={invalid || undefined}
           aria-describedby={describedBy}
           aria-required="true"
+          disabled={disabled}
           className={cn(fieldBase, 'flex items-center justify-between gap-2 text-left')}
         >
           <span className={cn('truncate', !value && 'text-muted')}>{value || 'Choose or type a medication'}</span>
@@ -76,7 +79,7 @@ export function MedicationCombobox({
           />
           <CommandList aria-label="Medications">
             {matches.length > 0 && (
-              <CommandGroup heading="Current medications">
+              <CommandGroup heading="On file">
                 {matches.map((option) => {
                   const hasReminder = taken.includes(option)
                   return (
