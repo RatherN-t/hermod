@@ -33,6 +33,7 @@ export function ActiveReminderRow({ reminder, today, editing, onTogglePause, onE
         </p>
         <p className="text-helper text-muted">
           {scheduleLabel(reminder.timesOfDay)} · {ends}
+          {reminder.customMessage !== null && ' · Custom message'}
         </p>
       </div>
 

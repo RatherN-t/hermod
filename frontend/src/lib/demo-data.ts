@@ -48,7 +48,7 @@ export const seededReminders: ActiveReminder[] = [
     totalDoses: 112,
     status: 'active',
     language: 'en',
-    note: '',
+    customMessage: null,
     alertOnMissed: true,
     waPhone: '(202) 555-0148',
   },

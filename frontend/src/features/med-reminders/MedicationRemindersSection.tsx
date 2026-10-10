@@ -41,7 +41,7 @@ export function MedicationRemindersSection({ patient, today }: Props) {
       endDate: end,
       totalDoses: draft.timesOfDay.length * reminderDays(today, end),
       language: draft.language,
-      note: draft.note,
+      customMessage: draft.customMessage === null ? null : draft.customMessage.trim(),
       alertOnMissed: draft.alertOnMissed,
       waPhone: draft.waPhone,
     }

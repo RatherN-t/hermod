@@ -1,11 +1,11 @@
 import { endDate, formatTime } from '@/lib/schedule'
 import type { IsoDate, ReminderDraft } from './types'
 
-export type FieldKey = 'name' | 'times' | 'duration' | 'phone' | 'consent'
+export type FieldKey = 'name' | 'times' | 'duration' | 'message' | 'phone' | 'consent'
 export type FieldErrors = Partial<Record<FieldKey, string>>
 
 export const MAX_DAYS = 90
-export const NOTE_MAX = 140
+export const MESSAGE_MAX = 500
 
 export function validateDraft(draft: ReminderDraft, ctx: { today: IsoDate; nextAppointment: IsoDate }): FieldErrors {
   const errors: FieldErrors = {}
@@ -36,6 +36,12 @@ export function validateDraft(draft: ReminderDraft, ctx: { today: IsoDate; nextA
 
   if (draft.phoneEdited && draft.waPhone.replace(/\D/g, '').length < 10) {
     errors.phone = 'Enter a full phone number, including area code.'
+  }
+
+  if (draft.customMessage !== null) {
+    const length = draft.customMessage.trim().length
+    if (length === 0) errors.message = 'Write a message, or turn this off to send the standard one.'
+    else if (length > MESSAGE_MAX) errors.message = `Keep the message under ${MESSAGE_MAX} characters.`
   }
 
   if (!draft.consent) errors.consent = 'Confirm the patient agreed before you start reminders.'

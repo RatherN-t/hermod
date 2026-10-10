@@ -12,7 +12,7 @@ export function emptyDraft(patient: DemoPatient): ReminderDraft {
     phoneEdited: false,
     consent: false,
     language: 'en',
-    note: '',
+    customMessage: null,
     alertOnMissed: true,
   }
 }
@@ -29,7 +29,7 @@ export function draftFromReminder(r: ActiveReminder, patient: DemoPatient): Remi
     // Consent was recorded when the reminder was first started.
     consent: true,
     language: r.language,
-    note: r.note,
+    customMessage: r.customMessage,
     alertOnMissed: r.alertOnMissed,
   }
 }

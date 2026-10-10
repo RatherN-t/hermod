@@ -2,11 +2,12 @@ import { useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Label } from '@/components/ui/label'
-import { defaultTimes, endDate, summarySentence } from '@/lib/schedule'
+import { defaultTimes, endDate, standardMessage, summarySentence } from '@/lib/schedule'
 import { DurationCards } from './fields/DurationCards'
 import { Field, FieldError } from './fields/Field'
 import { fieldDescribedBy } from './fields/described-by'
 import { MedicationCombobox } from './fields/MedicationCombobox'
+import { MessageField } from './fields/MessageField'
 import { TimesPerDay } from './fields/TimesPerDay'
 import type { DemoPatient, IsoDate, ReminderDraft } from './types'
 import { validateDraft, type FieldKey } from './validation'
@@ -68,7 +69,17 @@ export function ReminderForm({ patient, today, initial, mode, taken, onSubmit, o
           <MedicationCombobox
             id="reminder-medication"
             value={draft.name}
-            onChange={(name) => update({ name })}
+            onChange={(name) =>
+              setDraft((d) => ({
+                ...d,
+                name,
+                // An untouched template follows the medication; edited text is left alone.
+                customMessage:
+                  d.customMessage === standardMessage(patient.firstName, d.name)
+                    ? standardMessage(patient.firstName, name)
+                    : d.customMessage,
+              }))
+            }
             onClose={() => touch('name')}
             options={patient.currentMedications}
             taken={taken}
@@ -109,6 +120,15 @@ export function ReminderForm({ patient, today, initial, mode, taken, onSubmit, o
             describedBy={fieldDescribedBy('reminder-duration', { error: durationError })}
           />
         </Field>
+
+        <MessageField
+          firstName={patient.firstName}
+          medication={draft.name}
+          value={draft.customMessage}
+          error={shown('message')}
+          onChange={(customMessage) => update({ customMessage })}
+          onBlur={() => touch('message')}
+        />
 
         <div className="flex flex-col gap-2">
           <div className="flex min-h-10 items-center gap-3">

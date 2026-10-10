@@ -28,8 +28,8 @@ export interface ReminderDraft {
   phoneEdited: boolean
   consent: boolean
   language: MessageLanguage
-  /** Medication.instructions */
-  note: string
+  /** Patient-facing reminder text. null = the standard message. */
+  customMessage: string | null
   alertOnMissed: boolean
 }
 
@@ -51,7 +51,7 @@ export interface ActiveReminder {
   totalDoses: number
   status: ReminderStatus
   language: MessageLanguage
-  note: string
+  customMessage: string | null
   alertOnMissed: boolean
   waPhone: string
 }
