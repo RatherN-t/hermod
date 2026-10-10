@@ -1,7 +1,6 @@
-import { demoPatient } from '@/lib/demo-data'
+import type { DemoPatientRecord } from '@/lib/demo-data'
 
-export function PatientSidebar() {
-  const p = demoPatient
+export function PatientSidebar({ patient: p }: { patient: DemoPatientRecord }) {
   const rows: [string, string][] = [
     ['Date of birth', p.dateOfBirth],
     ['Phone', p.waPhone],
@@ -10,7 +9,7 @@ export function PatientSidebar() {
   ]
 
   return (
-    <aside aria-label="Patient" className="self-start rounded-xl border border-border bg-surface p-4">
+    <aside aria-label="Patient" className="rounded-xl border border-border bg-surface p-4">
       {/* Initials stand in for a photo: this is a fictional demo patient. */}
       <span aria-hidden="true" className="grid size-20 place-items-center rounded-lg bg-accent-soft text-2xl font-medium text-accent">
         {p.initials}

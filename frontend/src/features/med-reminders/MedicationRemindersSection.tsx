@@ -1,7 +1,6 @@
 import { useRef, useState } from 'react'
 import { Plus } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { seededReminders } from '@/lib/demo-data'
 import { addDays, reminderDays } from '@/lib/schedule'
 import { ActiveReminderRow } from './ActiveReminderRow'
 import { draftFromReminder, emptyDraft } from './draft'
@@ -11,12 +10,13 @@ import type { ActiveReminder, DemoPatient, IsoDate, ReminderDraft, ReminderStatu
 interface Props {
   patient: DemoPatient
   today: IsoDate
+  initialReminders: ActiveReminder[]
 }
 
 type FormState = { mode: 'new'; key: number } | { mode: 'edit'; id: string; key: number } | null
 
-export function MedicationRemindersSection({ patient, today }: Props) {
-  const [reminders, setReminders] = useState<ActiveReminder[]>(seededReminders)
+export function MedicationRemindersSection({ patient, today, initialReminders }: Props) {
+  const [reminders, setReminders] = useState<ActiveReminder[]>(initialReminders)
   const [form, setForm] = useState<FormState>(null)
   const [announcement, setAnnouncement] = useState('')
   const addButton = useRef<HTMLButtonElement>(null)
