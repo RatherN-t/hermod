@@ -211,11 +211,13 @@ def checkin_text(patient: Patient, items: list[tuple[DoseEvent, Medication]]) ->
     custom = [m for _, m in items if m.checkin_message]
     if len(items) == 1 and custom:
         m = custom[0]
-        try:
-            return m.checkin_message.format(name=first_name, medication=m.name, dose=m.dose,
-                                            time=when)
-        except (KeyError, IndexError, ValueError):
-            return m.checkin_message  # unknown {placeholder}: send it as written
+        # Plain replacement, not str.format: the template comes from the API, and format()
+        # would allow attribute access like {name.__class__}. Unknown braces stay as written.
+        text = m.checkin_message
+        for key, value in {"name": first_name, "medication": m.name, "dose": m.dose,
+                           "time": when}.items():
+            text = text.replace("{" + key + "}", value)
+        return text
     meds = "; ".join(
         f"{m.name} ({m.dose}{', ' + m.instructions if m.instructions else ''})" for _, m in items
     )

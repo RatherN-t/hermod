@@ -266,3 +266,11 @@ def test_openapi_lists_routes(api):
     for p in ["/api/dashboard", "/api/patients", "/api/patients/{patient_id}/reminders",
               "/api/reminders/{reminder_id}", "/api/flags", "/api/traces/{trace_id}"]:
         assert p in paths
+
+
+def test_custom_message_placeholders_cannot_reach_attributes(api, channel):
+    p = make_patient(api, name="Sam Taylor")
+    r = make_reminder(api, p["id"],
+                      customMessage="{name.__class__} {name} {unknown} {{x}} {medication}")
+    api.post(f"/api/reminders/{r['id']}/checkin")
+    assert channel.sent[-1]["text"] == "{name.__class__} Sam {unknown} {{x}} Amoxicillin 500mg"
