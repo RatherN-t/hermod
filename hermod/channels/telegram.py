@@ -72,7 +72,10 @@ class TelegramChannel:
                                            allowed_updates=["message"])
             except (httpx.HTTPError, RuntimeError, ValueError) as e:
                 # Type only: httpx error messages include the URL, which holds the bot token.
-                log.warning("Telegram poll failed (%s); retrying in 5s", type(e).__name__)
+                # RuntimeError carries Telegram's own description (no URL), e.g. a 409 when
+                # another server is polling the same bot.
+                log.warning("Telegram poll failed (%s); retrying in 5s",
+                            e if isinstance(e, RuntimeError) else type(e).__name__)
                 await asyncio.sleep(5)
                 continue
             for u in updates:
