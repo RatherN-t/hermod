@@ -50,8 +50,8 @@ export interface DurationInput {
 }
 
 /**
- * Reminders start the day after setup and run through the end date (inclusive).
- * Returns null when the chosen duration has no valid end date yet.
+ * Reminders run from the day after `today` (the course base) through the end date
+ * (inclusive). Returns null when the chosen duration has no valid end date yet.
  */
 export function endDate(duration: DurationInput, today: IsoDate): IsoDate | null {
   switch (duration.kind) {
@@ -98,19 +98,29 @@ export function plural(n: number, one: string, many: string): string {
   return `${n} ${n === 1 ? one : many}`
 }
 
-/** "Eleanor will get 3 reminders a day for 7 days (21 total), ending Oct 17." */
+/** "Eleanor will get 3 reminders a day for 7 days (21 total), starting tomorrow and ending Oct 17." */
 export function summarySentence(args: {
   firstName: string
   times: TimeOfDay[]
+  /** The real date, for "today" / "tomorrow" and year display. */
   today: IsoDate
+  /** Day before the course's first day. */
+  base: IsoDate
   end: IsoDate | null
+  /** Doses on the first day whose time has already passed (they aren't sent). */
+  skipped?: number
+  /** Leave out the start, e.g. for a course that's already running. */
+  hideStart?: boolean
 }): string {
-  const { firstName, times, today, end } = args
+  const { firstName, times, today, base, end, skipped = 0, hideStart } = args
   if (times.length === 0) return `Choose how many times a day ${firstName} should be reminded.`
   if (!end) return `Choose an end date to see ${firstName}’s full schedule.`
-  const days = reminderDays(today, end)
-  const total = times.length * days
-  return `${firstName} will get ${plural(times.length, 'reminder', 'reminders')} a day for ${plural(days, 'day', 'days')} (${total} total), ending ${formatDate(end, today)}.`
+  const days = reminderDays(base, end)
+  const total = Math.max(0, times.length * days - skipped)
+  const start = addDays(base, 1)
+  const startWord = start === today ? 'today' : start === addDays(today, 1) ? 'tomorrow' : formatDate(start, today)
+  const when = hideStart ? `ending ${formatDate(end, today)}` : `starting ${startWord} and ending ${formatDate(end, today)}`
+  return `${firstName} will get ${plural(times.length, 'reminder', 'reminders')} a day for ${plural(days, 'day', 'days')} (${total} total), ${when}.`
 }
 
 /** Default Telegram reminder text. The "Taken" and "Remind me in 30 min" buttons are added by the sender. */

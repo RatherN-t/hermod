@@ -3,9 +3,11 @@ import { clinicDate } from '@/lib/clinic-time'
 import { addDays, defaultTimes } from '@/lib/schedule'
 import type { IsoDate, ReminderDraft, ReminderPatient } from './types'
 
-export function emptyDraft(patient: ReminderPatient): ReminderDraft {
+export function emptyDraft(patient: ReminderPatient, today: IsoDate): ReminderDraft {
   return {
     name: '',
+    // New reminders start tomorrow unless the clinic picks another day.
+    startDate: addDays(today, 1),
     timesOfDay: defaultTimes(2),
     durationKind: patient.nextAppointment ? 'appointment' : 'days',
     durationDays: 7,
@@ -19,6 +21,7 @@ export function emptyDraft(patient: ReminderPatient): ReminderDraft {
 export function draftFromReminder(r: Reminder): ReminderDraft {
   return {
     name: r.name,
+    startDate: clinicDate(r.startDate),
     timesOfDay: [...r.timesOfDay],
     durationKind: r.durationKind,
     durationDays: r.durationDays ?? 7,
@@ -30,27 +33,18 @@ export function draftFromReminder(r: Reminder): ReminderDraft {
   }
 }
 
-/**
- * The day before the course's first day. Day counts and the summary are measured from it:
- * new reminders start tomorrow, so it's today; an edited course keeps its original start.
- */
-export function courseBase(today: IsoDate, editing?: Reminder): IsoDate {
-  return editing ? addDays(clinicDate(editing.startDate), -1) : today
-}
-
 const durationFields = (d: ReminderDraft) => ({
   durationKind: d.durationKind,
   ...(d.durationKind === 'days' ? { durationDays: d.durationDays } : {}),
   ...(d.durationKind === 'date' ? { untilDate: d.untilDate } : {}),
 })
 
-export function createBody(d: ReminderDraft, today: IsoDate): ReminderCreate {
+export function createBody(d: ReminderDraft): ReminderCreate {
   return {
     name: d.name.trim(),
     timesOfDay: [...d.timesOfDay].sort(),
     ...durationFields(d),
-    // Reminders start the day after setup, matching the schedule summary in the form.
-    startDate: addDays(today, 1),
+    startDate: d.startDate,
     customMessage: d.customMessage === null ? null : d.customMessage.trim(),
     alertOnMissed: d.alertOnMissed,
   }

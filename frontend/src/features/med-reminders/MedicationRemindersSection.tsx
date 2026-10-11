@@ -2,9 +2,8 @@ import { useRef, useState } from 'react'
 import { Plus } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { api, errorMessage, type Reminder } from '@/lib/api'
-import { addDays } from '@/lib/schedule'
 import { ActiveReminderRow } from './ActiveReminderRow'
-import { courseBase, createBody, draftFromReminder, emptyDraft, updateBody } from './draft'
+import { createBody, draftFromReminder, emptyDraft, updateBody } from './draft'
 import { ReminderForm } from './ReminderForm'
 import type { IsoDate, ReminderDraft, ReminderPatient } from './types'
 
@@ -55,7 +54,7 @@ export function MedicationRemindersSection({ patient, today, reminders, onChange
         await onChanged()
         setAnnouncement(`Reminders for ${name} updated.`)
       } else {
-        await api.createReminder(patient.id, createBody(draft, today))
+        await api.createReminder(patient.id, createBody(draft))
         await onChanged()
         setAnnouncement(`Reminders for ${name} started.`)
       }
@@ -120,10 +119,8 @@ export function MedicationRemindersSection({ patient, today, reminders, onChange
           key={form.key}
           patient={patient}
           today={today}
-          base={courseBase(today, editing)}
-          minEnd={editing ? today : addDays(today, 1)}
           mode={editing ? 'edit' : 'new'}
-          initial={editing ? draftFromReminder(editing) : emptyDraft(patient)}
+          initial={editing ? draftFromReminder(editing) : emptyDraft(patient, today)}
           options={options}
           taken={taken}
           saving={saving}

@@ -32,6 +32,12 @@ const wallClock = new Intl.DateTimeFormat('en-CA', {
   minute: '2-digit',
 })
 
+/** The clinic's current time of day, e.g. "14:05". */
+export function clinicTimeNow(): string {
+  const p = Object.fromEntries(wallClock.formatToParts(new Date()).map((x) => [x.type, x.value]))
+  return `${p.hour}:${p.minute}`
+}
+
 /** Clinic-local date and time ("2026-11-12", "09:30") → UTC ISO string for the API. */
 export function clinicDateTimeToUtc(date: IsoDate, time: string): string {
   const [y, m, d] = date.split('-').map(Number)

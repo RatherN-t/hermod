@@ -1,7 +1,7 @@
-import { daysBetween, endDate, formatTime } from '@/lib/schedule'
+import { daysBetween, endDate, formatDate, formatTime, isValidIsoDate } from '@/lib/schedule'
 import type { IsoDate, ReminderDraft } from './types'
 
-export type FieldKey = 'name' | 'times' | 'duration' | 'message' | 'consent'
+export type FieldKey = 'name' | 'start' | 'times' | 'duration' | 'message' | 'consent'
 export type FieldErrors = Partial<Record<FieldKey, string>>
 
 /** Longest course the API accepts for "Number of days". */
@@ -9,17 +9,25 @@ export const MAX_DAYS = 180
 export const MESSAGE_MAX = 500
 
 export interface ValidationContext {
-  /** Day before the course's first day (see `courseBase`). */
+  today: IsoDate
+  /** Day before the course's first day. */
   base: IsoDate
   /** Earliest allowed last day. */
   minEnd: IsoDate
   nextAppointment: IsoDate | null
+  /** New reminders pick their start date; an existing course keeps its own. */
+  checkStart: boolean
 }
 
 export function validateDraft(draft: ReminderDraft, ctx: ValidationContext): FieldErrors {
   const errors: FieldErrors = {}
 
   if (!draft.name.trim()) errors.name = 'Choose a medication or type its name.'
+
+  if (ctx.checkStart) {
+    if (!draft.startDate || !isValidIsoDate(draft.startDate)) errors.start = 'Pick the first day of reminders.'
+    else if (daysBetween(ctx.today, draft.startDate) < 0) errors.start = 'Pick today or a later date.'
+  }
 
   if (draft.timesOfDay.length === 0) {
     errors.times = 'Choose how many times a day.'
@@ -39,6 +47,7 @@ export function validateDraft(draft: ReminderDraft, ctx: ValidationContext): Fie
   )
   if (draft.durationKind === 'appointment') {
     if (!ctx.nextAppointment) errors.duration = 'No appointment is booked. Choose another option.'
+    else if (!end || daysBetween(ctx.minEnd, end) < 0) errors.duration = 'The appointment is before the start date. Choose another option.'
   } else if (draft.durationKind === 'days') {
     if (!Number.isInteger(draft.durationDays) || draft.durationDays < 1 || draft.durationDays > MAX_DAYS) {
       errors.duration = `Enter a number of days from 1 to ${MAX_DAYS}.`
@@ -47,7 +56,7 @@ export function validateDraft(draft: ReminderDraft, ctx: ValidationContext): Fie
     }
   } else {
     if (!draft.untilDate) errors.duration = 'Pick the last day of reminders.'
-    else if (!end || daysBetween(ctx.minEnd, end) < 0) errors.duration = 'Pick a date after today.'
+    else if (!end || daysBetween(ctx.minEnd, end) < 0) errors.duration = `Pick ${formatDate(ctx.minEnd, ctx.today)} or later.`
   }
 
   if (draft.customMessage !== null) {

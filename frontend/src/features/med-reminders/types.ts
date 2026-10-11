@@ -14,6 +14,8 @@ export type DurationKind = 'appointment' | 'days' | 'date'
 
 export interface ReminderDraft {
   name: string
+  /** First day of reminders; today or later. Fixed once a reminder exists. */
+  startDate: IsoDate | ''
   timesOfDay: TimeOfDay[]
   durationKind: DurationKind
   durationDays: number

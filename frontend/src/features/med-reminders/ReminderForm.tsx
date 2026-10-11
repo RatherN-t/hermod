@@ -1,8 +1,10 @@
 import { useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
+import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { defaultTimes, endDate, standardMessage, summarySentence } from '@/lib/schedule'
+import { clinicTimeNow } from '@/lib/clinic-time'
+import { addDays, daysBetween, defaultTimes, endDate, isValidIsoDate, standardMessage, summarySentence } from '@/lib/schedule'
 import { DurationCards } from './fields/DurationCards'
 import { Field, FieldError } from './fields/Field'
 import { fieldDescribedBy } from './fields/described-by'
@@ -15,10 +17,6 @@ import { validateDraft, type FieldKey } from './validation'
 interface ReminderFormProps {
   patient: ReminderPatient
   today: IsoDate
-  /** Day before the course's first day; day counts and the summary are measured from it. */
-  base: IsoDate
-  /** Earliest allowed last day of reminders. */
-  minEnd: IsoDate
   initial: ReminderDraft
   mode: 'new' | 'edit'
   /** Medication names to suggest. */
@@ -33,13 +31,23 @@ interface ReminderFormProps {
 }
 
 export function ReminderForm(props: ReminderFormProps) {
-  const { patient, today, base, minEnd, initial, mode, options, taken, saving, submitError, onSubmit, onCancel } = props
+  const { patient, today, initial, mode, options, taken, saving, submitError, onSubmit, onCancel } = props
   const [draft, setDraft] = useState<ReminderDraft>(initial)
   const [touched, setTouched] = useState<Partial<Record<FieldKey, boolean>>>({})
   const [submitAttempted, setSubmitAttempted] = useState(false)
 
+  // Day counts and the summary are measured from the day before the course's first day.
+  // An edited course keeps its original start; a new one starts on the picked day.
+  const isNew = mode === 'new'
+  const firstDay = isValidIsoDate(draft.startDate) ? draft.startDate : addDays(today, 1)
+  const base = addDays(firstDay, -1)
+  const minEnd = isNew ? (daysBetween(today, firstDay) > 0 ? firstDay : today) : today
+  // Doses earlier today than now are skipped when a course starts today.
+  const now = clinicTimeNow()
+  const skipped = isNew && firstDay === today ? draft.timesOfDay.filter((t) => t <= now).length : 0
+
   const nextAppointment = patient.nextAppointment?.date ?? null
-  const errors = validateDraft(draft, { base, minEnd, nextAppointment })
+  const errors = validateDraft(draft, { today, base, minEnd, nextAppointment, checkStart: isNew })
   const isValid = Object.keys(errors).length === 0
   const shown = (key: FieldKey) => (touched[key] || submitAttempted ? (errors[key] ?? null) : null)
   const touch = (key: FieldKey) => setTouched((t) => (t[key] ? t : { ...t, [key]: true }))
@@ -49,9 +57,10 @@ export function ReminderForm(props: ReminderFormProps) {
     { kind: draft.durationKind, days: draft.durationDays, untilDate: draft.untilDate, nextAppointment: nextAppointment ?? '' },
     base,
   )
-  const sentence = summarySentence({ firstName: patient.firstName, times: draft.timesOfDay, today: base, end })
+  const sentence = summarySentence({ firstName: patient.firstName, times: draft.timesOfDay, today, base, end, skipped, hideStart: !isNew })
 
   const nameError = shown('name')
+  const startError = shown('start')
   const timesError = shown('times')
   const durationError = shown('duration')
   const consentError = shown('consent')
@@ -106,6 +115,28 @@ export function ReminderForm(props: ReminderFormProps) {
             describedBy={fieldDescribedBy('reminder-medication', { helper: mode === 'edit', error: nameError })}
           />
         </Field>
+
+        {isNew && (
+          <Field
+            id="reminder-start"
+            label="Start date"
+            error={startError}
+            helper={skipped > 0 ? 'Doses earlier than now are skipped today.' : 'Today or any later date.'}
+          >
+            <Input
+              id="reminder-start"
+              type="date"
+              min={today}
+              value={draft.startDate}
+              onChange={(e) => update({ startDate: e.target.value })}
+              onBlur={() => touch('start')}
+              aria-required="true"
+              aria-invalid={startError ? true : undefined}
+              aria-describedby={fieldDescribedBy('reminder-start', { helper: !startError, error: startError })}
+              className="w-44 tabular-nums"
+            />
+          </Field>
+        )}
 
         <Field id="reminder-times" group label="Times a day" error={timesError}>
           <TimesPerDay
