@@ -97,6 +97,9 @@ lives in a messaging app).
 3. **Hand-over test:** someone unfamiliar does a 2-day course on their own phone. Seed them, send
    the link, and keep the server running.
 4. **Hackathon deliverables:** public website, 4-page deck, demo of 5 minutes or less (see the brief).
+   The deck is planned page by page in [docs/pitch-deck.md](pitch-deck.md) (content, design
+   tokens, Canva route, assets to capture, review checklist); the outline is also waiting in
+   the Canva outline review widget.
 5. Stretch: prescription photo parsed by Gemini vision.
 
 ## Setup the user must do (not code; check with the user what's done)
