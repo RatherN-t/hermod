@@ -13,8 +13,8 @@ def test_add_missing_columns_backfills_defaults(tmp_path):
     SQLModel.metadata.create_all(eng)
     with eng.begin() as c:
         c.execute(text("INSERT INTO patient (name, phone, link_code, doctor_name, is_synthetic, "
-                       "created_at, language, notes) VALUES ('Old', '1', 'abc', '', 1, "
-                       "'2026-10-10 00:00:00', 'en', '')"))
+                       "messages_stopped, created_at, language, notes) VALUES ('Old', '1', "
+                       "'abc', '', 1, 0, '2026-10-10 00:00:00', 'en', '')"))
         c.execute(text("ALTER TABLE patient DROP COLUMN language"))
         c.execute(text("ALTER TABLE medication DROP COLUMN paused"))
 

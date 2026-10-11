@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import { ArrowLeft } from 'lucide-react'
+import { ArrowLeft, BellOff } from 'lucide-react'
 import { MedicationRemindersSection } from '@/features/med-reminders/MedicationRemindersSection'
 import type { ReminderPatient } from '@/features/med-reminders/types'
 import { summarizeAdherence } from '@/lib/adherence'
@@ -24,7 +24,11 @@ function reminderPatient(p: PatientDetail): ReminderPatient {
 
 export function PatientPage({ id }: { id: string }) {
   const numericId = /^\d+$/.test(id) ? Number(id) : null
-  const { data: patient, error, reload } = useApi(
+  const {
+    data: patient,
+    error,
+    reload,
+  } = useApi(
     (signal) => (numericId === null ? Promise.reject(new ApiError(404, 'Not found')) : api.getPatient(numericId, signal)),
     numericId,
   )
@@ -32,15 +36,18 @@ export function PatientPage({ id }: { id: string }) {
   const today = clinicToday()
 
   useEffect(() => {
-    if (patient) document.title = `${patient.name} · everwell`
-    else if (notFound) document.title = 'Patient not found · everwell'
+    if (patient) document.title = `${patient.name} · Hermod`
+    else if (notFound) document.title = 'Patient not found · Hermod'
   }, [patient, notFound])
 
   return (
     <main className="mx-auto max-w-[1120px] px-4 py-4 md:px-6">
       <a
         href={patientsHref}
-        className={cn('-ml-2 inline-flex h-10 items-center gap-2 rounded-lg px-2 text-helper text-muted transition-colors duration-150 hover:text-ink', focusRing)}
+        className={cn(
+          '-ml-2 inline-flex h-10 items-center gap-2 rounded-lg px-2 text-helper text-muted transition-colors duration-150 hover:text-ink',
+          focusRing,
+        )}
       >
         <ArrowLeft aria-hidden="true" className="size-4 stroke-[1.5]" />
         All patients
@@ -49,19 +56,34 @@ export function PatientPage({ id }: { id: string }) {
       {patient ? (
         <div className="mt-2 grid gap-6 md:grid-cols-[15rem_minmax(0,1fr)]">
           <div className="flex flex-col gap-4 self-start">
-            <PatientSidebar patient={patient} today={today} />
+            <PatientSidebar patient={patient} today={today} onChanged={reload} />
             <AdherenceCard
               summary={summarizeAdherence(patient.adherence)}
-              prescribed={patient.reminders.reduce((sum, r) => sum + r.totalDoses, 0)}
+              prescribed={
+                patient.reminders.some((r) => r.totalDoses === null)
+                  ? null
+                  : patient.reminders.reduce((sum, r) => sum + (r.totalDoses ?? 0), 0)
+              }
             />
           </div>
-          <MedicationRemindersSection
-            key={patient.id}
-            patient={reminderPatient(patient)}
-            today={today}
-            reminders={patient.reminders}
-            onChanged={reload}
-          />
+          <div className="flex min-w-0 flex-col gap-4">
+            {patient.messagesStopped && (
+              <p role="status" className="flex items-start gap-2 rounded-xl border border-border bg-subtle px-4 py-3 text-sm text-ink">
+                <BellOff aria-hidden="true" className="mt-0.5 size-4 shrink-0 stroke-[1.5] text-muted" />
+                <span>
+                  Messages are stopped for {firstName(patient.name)}. Hermod won’t send check-ins or reply on Telegram, and upcoming doses
+                  aren’t tracked. Resume messages from the patient card.
+                </span>
+              </p>
+            )}
+            <MedicationRemindersSection
+              key={patient.id}
+              patient={reminderPatient(patient)}
+              today={today}
+              reminders={patient.reminders}
+              onChanged={reload}
+            />
+          </div>
         </div>
       ) : notFound ? (
         <div className="mt-2 rounded-xl border border-border bg-surface p-6">

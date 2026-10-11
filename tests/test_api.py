@@ -6,7 +6,7 @@ from fastapi.testclient import TestClient
 from sqlmodel import select
 
 from hermod.adherence.rules import evaluate_patient
-from hermod.agent.agent import handle_inbound
+from hermod.agent.agent import handle_inbound, run_checkin
 from hermod.channels.base import IncomingMessage
 from hermod.config import get_settings
 from hermod.db.models import (
@@ -19,6 +19,7 @@ from hermod.db.models import (
     Message,
     Prescription,
 )
+from hermod.harness.guardrails import ESCALATION_MESSAGE
 from hermod.llm.client import LLMResult
 from hermod.main import app
 from hermod.timeutil import local_tz, utcnow
@@ -259,7 +260,43 @@ async def test_messages_link_to_traces(api, patient, llm, anyio_backend):
     assert api.get("/api/traces/999").status_code == 404
 
 
-async def test_delete_patient_removes_everything(api, patient, llm, session, anyio_backend):
+async def test_stop_messages_blocks_checkins_and_replies(api, patient, llm, session, channel,
+                                                         anyio_backend):
+    due = session.exec(select(DoseEvent).where(DoseEvent.patient_id == patient.id)).first()
+    r = make_reminder(api, patient.id, name="Ibuprofen 200mg")
+    future = select(DoseEvent).where(DoseEvent.patient_id == patient.id,
+                                     DoseEvent.scheduled_for > utcnow())
+    assert session.exec(future).all()
+
+    p = api.patch(f"/api/patients/{patient.id}", json={"messagesStopped": True}).json()
+    assert p["messagesStopped"] is True
+    assert api.get("/api/patients").json()[0]["messagesStopped"] is True
+    session.expire_all()
+    assert session.exec(future).all() == []  # upcoming doses cleared, so none count as missed
+
+    await run_checkin(patient.id, [due.id])  # a check-in the scheduler had already queued
+    assert api.post(f"/api/reminders/{r['id']}/checkin").status_code == 409
+    await handle_inbound(IncomingMessage(sender_id=patient.phone, text="took it",
+                                         message_id="s1"))  # llm has nothing queued: not called
+    assert channel.sent == []
+    assert [m["text"] for m in api.get(f"/api/patients/{patient.id}/messages").json()] == \
+        ["took it"]  # still logged for the doctor
+    make_reminder(api, patient.id, name="Cetirizine 10mg")  # new reminders stay quiet too
+    session.expire_all()
+    assert session.exec(future).all() == []
+
+    # Safety: an emergency still gets the fixed escalation, even with messages stopped.
+    await handle_inbound(IncomingMessage(sender_id=patient.phone, text="I took the whole pack",
+                                         message_id="s2"))
+    assert channel.sent[-1]["text"] == ESCALATION_MESSAGE
+
+    api.patch(f"/api/patients/{patient.id}", json={"messagesStopped": False})
+    session.expire_all()
+    assert session.exec(future).all()  # courses rescheduled
+
+
+async def test_delete_patient_removes_everything(api, patient, llm, session, channel,
+                                                 anyio_backend):
     llm(LLMResult(text="", tool_calls=[{"id": "c1", "name": "log_dose",
                                          "arguments": {"medication": "Amoxicillin",
                                                        "status": "taken"}}]),
@@ -274,8 +311,13 @@ async def test_delete_patient_removes_everything(api, patient, llm, session, any
     make_reminder(api, other["id"])
     pid = patient.id
     assert api.get(f"/api/patients/{pid}/messages").json()
+    dose_ids = session.exec(select(DoseEvent.id).where(DoseEvent.patient_id == pid)).all()
 
     assert api.delete(f"/api/patients/{pid}").status_code == 204
+    # A check-in the scheduler queued just before the delete goes nowhere.
+    channel.sent.clear()
+    await run_checkin(pid, list(dose_ids))
+    assert channel.sent == []
     assert api.get(f"/api/patients/{pid}").status_code == 404
     assert api.delete(f"/api/patients/{pid}").status_code == 404
     session.expire_all()

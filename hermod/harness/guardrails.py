@@ -20,7 +20,16 @@ SAFE_FALLBACK = (
 # Reports of taking more than prescribed. These also get an "extra" dose logged.
 _OVERDOSE = [
     r"\boverdos",
-    r"\btook (?:all|the whole|the rest|a handful|a (?:whole|full) (?:pack|box|bottle|strip))",
+    # "took all the pills", "took the rest of the pack", "took them all at once"; but not
+    # everyday replies like "yes took all of them", "took the rest of my antibiotics today"
+    # (finishing a course) or "took all 3 tablets as prescribed" / "...this morning" (today's
+    # doses), which have a small count or a normal-schedule phrase.
+    (r"\btook (?:all|the rest) (?:of )?(?:the |my |of my |them )?(?!\d\b|two |three |four )"
+     r"(?:\w+ )?(?:pills|tablets|capsules|pack|packet|box|bottle|strip)\b"
+     r"(?!\s+(?:prescribed|as (?:prescribed|directed|told)|for (?:today|the day|this morning|tonight)|"
+     r"this morning|today|tonight|with (?:breakfast|lunch|dinner|food|water)))"),
+    r"\btook (?:them |it )?all at once\b|\btook all (?:of )?them at once\b",
+    r"\btook (?:the whole (?:pack|packet|box|bottle|strip|lot)|a handful|a (?:whole|full) (?:pack|packet|box|bottle|strip))",
     r"\b(?:took|taken|swallowed) (?:way |far )?too (?:many|much)\b",
     (r"\b(?:took|taken|swallowed) (?:\d{2,}|ten|twenty|lots of|a lot of|loads of|several|"
      r"a bunch of) (?:pills|tablets|capsules)\b"),

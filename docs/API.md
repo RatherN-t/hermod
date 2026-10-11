@@ -34,8 +34,15 @@ trace behind every reply.
 | `GET /api/patients?q=` | Patient list with adherence, open flag counts and next dose (`q` = name contains) |
 | `POST /api/patients` | Create a patient → full detail incl. their Telegram start link |
 | `GET /api/patients/{id}` | Everything about one patient: profile, link, adherence, flags, reminders |
-| `PATCH /api/patients/{id}` | Edit name, doctor, DOB, language, next appointment, notes |
-| `DELETE /api/patients/{id}` | **Permanent.** Deletes the patient and all their reminders, doses, messages, traces and flags → `204`. Confirm with the user first |
+| `PATCH /api/patients/{id}` | Edit name, doctor, DOB, language, next appointment, notes; `messagesStopped` (see below) |
+| `DELETE /api/patients/{id}` | **Permanent.** Deletes the patient and all their reminders, doses, messages, traces and flags → `204`; nothing more is sent to them. Confirm with the user first |
+
+**Stopping messages.** `PATCH /api/patients/{id}` with `{"messagesStopped": true}` turns Hermod off
+for that patient: no check-ins (scheduled or `/checkin`, which returns `409`), no agent replies,
+and upcoming doses are cleared so the gap isn't counted as missed. Messages the patient sends
+are still logged. For safety, an emergency message still gets the fixed escalation reply and an
+urgent flag. `{"messagesStopped": false}` turns it back on and reschedules the courses. Patient
+responses (list and detail) include `messagesStopped`.
 | `GET /api/patients/{id}/link` | `{linked, linkCode, telegramLink}`; show as a link or QR code |
 | `POST /api/patients/{id}/link/reset` | New link, unlinks the current chat (if the link leaked) |
 | `GET /api/patients/{id}/reminders` | The patient's reminders (all statuses) |

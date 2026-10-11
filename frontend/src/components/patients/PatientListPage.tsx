@@ -23,7 +23,7 @@ export function PatientListPage({ page }: { page: number }) {
   const { data, error, reload } = useApi((signal) => api.listPatients(signal))
 
   useEffect(() => {
-    document.title = 'Patients · everwell'
+    document.title = 'Patients · Hermod'
   }, [])
 
   const patients = data ? [...data].sort((a, b) => a.name.localeCompare(b.name)) : []
@@ -151,7 +151,18 @@ function PatientRow({ patient: p }: { patient: PatientListItem }) {
             >
               {p.name}
             </a>
-            <p className="text-helper text-muted tabular-nums sm:hidden">#{p.id}</p>
+            {/* The ID column is hidden on phones, so the ID moves under the name there. */}
+            <p className="text-helper text-muted tabular-nums">
+              <span className="sm:hidden">#{p.id}</span>
+              {p.messagesStopped && (
+                <>
+                  <span aria-hidden="true" className="sm:hidden">
+                    {' · '}
+                  </span>
+                  Messages stopped
+                </>
+              )}
+            </p>
           </div>
         </div>
       </td>

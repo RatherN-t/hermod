@@ -7,7 +7,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from sqlmodel import Session, select
 
 from hermod.adherence.rules import evaluate_patient
-from hermod.db.models import DoseEvent, DoseStatus, Medication, Prescription
+from hermod.db.models import DoseEvent, DoseStatus, Medication, Patient, Prescription
 from hermod.db.session import new_session
 from hermod.harness.alerts import notify_doctor
 from hermod.timeutil import local_tz, to_local, to_utc, utcnow
@@ -34,6 +34,9 @@ def schedule_medication(s: Session, rx: Prescription, med: Medication, days: lis
     Returns how many were created. Caller commits."""
     if med.paused:
         return 0
+    patient = s.get(Patient, rx.patient_id)
+    if patient is None or patient.messages_stopped:
+        return 0  # nothing to ask about while the clinic has messaging off
     start = to_local(rx.start_date)
     end_day = to_local(rx.end_date).date() if rx.end_date else None
     existing = set(s.exec(
@@ -116,6 +119,9 @@ async def tick() -> None:
         stale = s.exec(select(DoseEvent).where(
             DoseEvent.status == DoseStatus.PENDING,
             DoseEvent.scheduled_for < now - STALE_AFTER,
+            # Only doses Hermod asked about can go unanswered. A dose never asked (patient not
+            # linked yet, send failed, server was down) stays pending and isn't counted.
+            DoseEvent.checkin_sent_at.is_not(None),
         )).all()
         for e in stale:
             e.status = DoseStatus.UNKNOWN

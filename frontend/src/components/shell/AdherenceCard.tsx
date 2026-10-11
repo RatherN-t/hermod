@@ -1,7 +1,7 @@
 import { adherencePercent, type AdherenceSummary } from '@/lib/adherence'
 
-/** `prescribed` is every dose across the patient's courses (sum of the reminders' totalDoses). */
-export function AdherenceCard({ summary, prescribed }: { summary: AdherenceSummary; prescribed: number }) {
+/** `prescribed` is every dose across the patient's courses (sum of the reminders' totalDoses), or null if one is open-ended. */
+export function AdherenceCard({ summary, prescribed }: { summary: AdherenceSummary; prescribed: number | null }) {
   const { taken, due } = summary
   const pct = adherencePercent(summary)
   const missed = due - taken
@@ -14,7 +14,7 @@ export function AdherenceCard({ summary, prescribed }: { summary: AdherenceSumma
         </h2>
         <p className="mt-1 text-sm text-ink">No doses yet</p>
         <p className="mt-1 text-helper text-muted tabular-nums">
-          {prescribed > 0 ? `${prescribed} prescribed in total` : 'Add a medication to start tracking.'}
+          {prescribed === null ? 'Ongoing course' : prescribed > 0 ? `${prescribed} prescribed in total` : 'Add a medication to start tracking.'}
         </p>
       </section>
     )
@@ -42,7 +42,7 @@ export function AdherenceCard({ summary, prescribed }: { summary: AdherenceSumma
         <div className="h-full rounded-full bg-accent" style={{ width: `${pct}%` }} />
       </div>
       <p className="mt-3 text-helper text-muted tabular-nums">
-        {missed} missed · {prescribed} prescribed in total
+        {missed} missed · {prescribed === null ? 'ongoing course' : `${prescribed} prescribed in total`}
       </p>
     </section>
   )

@@ -28,6 +28,9 @@ class Patient(SQLModel, table=True):
     next_appointment_at: datetime | None = None
     notes: str = ""  # doctor-facing
     is_synthetic: bool = True  # demo data must be labelled
+    # The clinic turned Hermod off for this patient: no check-ins and no agent replies (an
+    # emergency still gets the fixed escalation message). Upcoming doses are cleared meanwhile.
+    messages_stopped: bool = False
     last_inbound_at: datetime | None = None  # None until the patient's first message
     created_at: datetime = Field(default_factory=_now)
 

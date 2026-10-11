@@ -5,7 +5,7 @@
 @theme {
   --font-sans: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
 
-  /* everwell palette: one accent (deep muted green). Danger is for asterisks and errors only. */
+  /* Hermod palette: one accent (deep muted green). Danger is for asterisks and errors only. */
   --color-page: #f7f6f2;
   --color-surface: #ffffff;
   --color-subtle: #faf9f6;

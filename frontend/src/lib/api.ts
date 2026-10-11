@@ -47,7 +47,8 @@ export interface Reminder {
   alertOnMissed: boolean
   dosesSent: number
   dosesConfirmed: number
-  totalDoses: number
+  /** null for an open-ended course. */
+  totalDoses: number | null
   nextDoseAt: IsoDateTime | null
 }
 
@@ -59,6 +60,8 @@ export interface PatientListItem {
   language: string
   isSynthetic: boolean
   telegramLinked: boolean
+  /** The clinic turned Hermod off for this patient: no check-ins, no replies. */
+  messagesStopped: boolean
   nextAppointmentAt: IsoDateTime | null
   activeReminders: number
   adherence: Adherence
@@ -161,6 +164,8 @@ export const api = {
   getPatient: (id: number, signal?: AbortSignal) => request<PatientDetail>(`/api/patients/${id}`, { signal }),
   createPatient: (body: PatientCreate) => request<PatientDetail>('/api/patients', { method: 'POST', json: body }),
   /** Permanent: deletes the patient and all their reminders, doses, messages and flags. */
+  updatePatient: (id: number, body: { messagesStopped?: boolean }) =>
+    request<PatientDetail>(`/api/patients/${id}`, { method: 'PATCH', json: body }),
   deletePatient: (id: number) => request<void>(`/api/patients/${id}`, { method: 'DELETE' }),
   createReminder: (patientId: number, body: ReminderCreate) =>
     request<Reminder>(`/api/patients/${patientId}/reminders`, { method: 'POST', json: body }),

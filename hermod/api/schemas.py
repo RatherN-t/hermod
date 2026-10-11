@@ -86,6 +86,8 @@ class PatientUpdate(Schema):
     language: Literal["en", "es"] | None = None
     next_appointment_at: datetime | None = None
     notes: str | None = None
+    messages_stopped: bool | None = Field(
+        default=None, description="true = Hermod stops messaging this patient; false = resume")
 
 
 class PatientListItem(Schema):
@@ -96,6 +98,7 @@ class PatientListItem(Schema):
     language: str
     is_synthetic: bool
     telegram_linked: bool
+    messages_stopped: bool
     next_appointment_at: datetime | None
     last_message_at: datetime | None
     active_reminders: int

@@ -116,7 +116,7 @@ export function summarySentence(args: {
 /** Default Telegram reminder text. The "Taken" and "Remind me in 30 min" buttons are added by the sender. */
 export function standardMessage(firstName: string, medication: string): string {
   const med = medication.trim() || 'your medication'
-  return `Hi ${firstName}, it’s time to take ${med}. Tap “Taken” once you’ve had it. – everwell clinic`
+  return `Hi ${firstName}, it’s time to take ${med}. Tap “Taken” once you’ve had it. – Hermod`
 }
 
 export function scheduleLabel(times: TimeOfDay[]): string {

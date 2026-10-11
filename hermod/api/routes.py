@@ -124,11 +124,26 @@ async def get_patient(patient_id: int, s: DB):
 
 @router.patch("/patients/{patient_id}", response_model=S.PatientDetail, tags=["patients"])
 async def update_patient(patient_id: int, body: S.PatientUpdate, s: DB):
+    """Edit the profile. `messagesStopped: true` turns Hermod off for this patient (no
+    check-ins, no replies) and clears their upcoming doses so the gap isn't counted as missed;
+    `false` turns it back on and reschedules their courses."""
     p = _patient(s, patient_id)
-    for k, v in body.model_dump(exclude_unset=True).items():
+    changes = body.model_dump(exclude_unset=True)
+    stop = changes.pop("messages_stopped", None)
+    for k, v in changes.items():
         setattr(p, k, v)
+    toggled = stop is not None and stop != p.messages_stopped
+    if toggled:
+        p.messages_stopped = stop
+        if stop:
+            for m, _ in V.patient_meds(s, p.id):
+                _drop_future_doses(s, m)
     s.add(p)
     s.commit()
+    if toggled and not stop:
+        for m, rx in V.patient_meds(s, p.id):
+            if not m.paused and V.reminder_status(m, rx) != "ended":
+                schedule_course(s, rx, m)
     return await V.patient_detail(s, p)
 
 
@@ -327,6 +342,8 @@ async def send_checkin_now(reminder_id: int, s: DB) -> dict:
     p = s.get(Patient, rx.patient_id)
     if not patient_address(p):
         raise HTTPException(status.HTTP_409_CONFLICT, "Patient hasn't linked Telegram yet")
+    if p.messages_stopped:
+        raise HTTPException(status.HTTP_409_CONFLICT, "Messages are stopped for this patient")
     if m.paused:
         raise HTTPException(status.HTTP_409_CONFLICT, "Reminder is paused")
     open_doses = s.exec(select(DoseEvent).where(

@@ -1,9 +1,10 @@
 """Agent loop: build context -> traced LLM call -> run tools -> guardrail -> reply."""
 import json
 import logging
+import re
 from datetime import timedelta
 
-from sqlmodel import Session, col, select
+from sqlmodel import Session, col, func, select
 
 from hermod.adherence.rules import evaluate_patient
 from hermod.agent.prompts import (
@@ -13,9 +14,10 @@ from hermod.agent.prompts import (
     UNKNOWN_CHAT_REPLY,
 )
 from hermod.agent.tools import (
-    EARLY_WINDOW,
     TOOL_SPECS,
+    Turn,
     active_medications,
+    current_doses,
     execute_tool,
     record_reported_overdose,
 )
@@ -83,11 +85,16 @@ async def handle_inbound(msg: IncomingMessage, channel: Channel | None = None) -
             s.add(flag)
             s.commit()
             new_flags.append(flag)
+        elif patient.messages_stopped:
+            # The clinic turned Hermod off: keep the message for the doctor, don't reply.
+            # (Emergencies above still get the fixed escalation, for safety.)
+            reply = None
         else:
             reply, tool_flags = await _run_agent(s, patient, first_contact, inbound.id)
             new_flags += tool_flags
 
-        await _send(s, channel, patient, guardrails.check_outbound(reply), inbound.id)
+        if reply is not None:
+            await _send(s, channel, patient, guardrails.check_outbound(reply), inbound.id)
         new_flags += evaluate_patient(patient.id, s)
         for f in new_flags:
             await notify_doctor(f)
@@ -117,11 +124,44 @@ def _find_patient(s: Session, msg: IncomingMessage) -> Patient | None:
     return None
 
 
+# Hermod asking whether a dose was taken, with or without "?" ("have you taken it?", "let me
+# know once you've taken it"). "Any side effects since your last dose?" is not one.
+_DOSE_QUESTION = re.compile(
+    r"\b(have you taken|did you take|you taken|you've taken|you have taken|taken (it|your|them)|"
+    r"(once|when) you'?ve (taken|had)|(once|when) you (take|have taken|had)|reply once|"
+    r"time (for|to take) your|it'?s your .{0,40}dose|did you have)\b", re.IGNORECASE)
+
+
+def _last_reply_asked_about_dose(s: Session, patient_id: int, inbound: Message | None) -> bool:
+    """Was the patient's message an answer to a dose question? True when Hermod's last word
+    was a check-in (nothing said since it went out) or asked about taking a dose."""
+    query = select(Message).where(Message.patient_id == patient_id,
+                                  Message.direction == Direction.OUTBOUND)
+    if inbound is not None:
+        query = query.where(Message.id < inbound.id)
+    last_out = s.exec(query.order_by(col(Message.id).desc())).first()
+    if last_out is not None and _DOSE_QUESTION.search(last_out.text):
+        return True
+    latest_checkin = s.exec(select(func.max(DoseEvent.checkin_sent_at))
+                            .where(DoseEvent.patient_id == patient_id)).one()
+    if latest_checkin is None:
+        return False
+    # The check-in itself is logged as an outbound message the moment it's sent; anything
+    # Hermod said after that ("any side effects?") is what a "yes" would be answering.
+    since = query.where(Message.created_at >= latest_checkin - timedelta(seconds=5))
+    return len(s.exec(since).all()) <= 1
+
+
 async def _run_agent(
     s: Session, patient: Patient, first_contact: bool, message_id: int | None = None
 ) -> tuple[str, list[Flag]]:
     messages = [{"role": "system", "content": build_system_prompt(s, patient, first_contact)}]
     messages += _history(s, patient.id)
+    # The message being answered: log_dose checks it really says the dose was taken/missed.
+    inbound = s.get(Message, message_id) if message_id else None
+    turn = Turn(text=inbound.text if inbound else "",
+                asked_about_dose=_last_reply_asked_about_dose(s, patient.id, inbound),
+                medication_names=tuple(m.name for m in active_medications(s, patient.id)))
     flags: list[Flag] = []
     for _ in range(MAX_TOOL_ROUNDS):
         try:
@@ -136,7 +176,7 @@ async def _run_agent(
             return result.text, flags
         messages.append(result.assistant_message())
         for call in result.tool_calls:
-            out = execute_tool(call["name"], call["arguments"], patient.id, s)
+            out = execute_tool(call["name"], call["arguments"], patient.id, s, turn)
             if out.get("flag_id"):
                 flags.append(s.get(Flag, out["flag_id"]))
             messages.append({"role": "tool", "tool_call_id": call["id"], "name": call["name"],
@@ -169,15 +209,17 @@ def build_system_prompt(s: Session, patient: Patient, first_contact: bool = Fals
         .order_by(col(DoseEvent.scheduled_for).desc())
     ).all()
     med_names = {m.id: m.name for m in s.exec(select(Medication)).all()}
-    due_now = next((e for e in events if e.scheduled_for <= now + EARLY_WINDOW), None)
+    # Same rule log_dose uses for a plain "yes": every dose in Hermod's latest check-in (one
+    # check-in can cover several medications), else the latest one due, from recent hours only.
+    due_now = {e.id for e in current_doses(s, patient.id)}
 
     def label(e: DoseEvent) -> str:
         if e.status == DoseStatus.EXTRA and e.patient_note:
             return f"extra ({e.patient_note[:150]})"
+        if e.id in due_now:
+            return f"{e.status}, DUE NOW"  # pending, or unknown (no reply in time)
         if e.status != DoseStatus.PENDING:
             return str(e.status)
-        if e is due_now:
-            return "pending, DUE NOW"
         return "upcoming" if e.scheduled_for > now else "pending"
 
     doses = [
@@ -249,8 +291,8 @@ async def run_checkin(patient_id: int, dose_event_ids: list[int]) -> None:
         patient = s.get(Patient, patient_id)
         items = [(e, m) for e in (s.get(DoseEvent, i) for i in dose_event_ids) if e
                  if (m := s.get(Medication, e.medication_id)) and not m.paused]
-        if not patient or not items:
-            return
+        if not patient or not items or patient.messages_stopped:
+            return  # deleted, nothing due, or the clinic turned messaging off
         text = checkin_text(patient, items)
         to = patient_address(patient)
         if not to:

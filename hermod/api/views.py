@@ -110,7 +110,10 @@ def reminder(s: Session, m: Medication, rx: Prescription | None = None) -> S.Rem
     rx = rx or s.get(Prescription, m.prescription_id)
     events = s.exec(select(DoseEvent).where(DoseEvent.medication_id == m.id)).all()
     now = utcnow()
-    due = [e for e in events if e.status != DoseStatus.EXTRA and e.scheduled_for <= now]
+    # Doses with an outcome: the same denominator as adherencePct (pending ones still waiting
+    # for a reply, or never asked about, and extra doses don't count).
+    due = [e for e in events if e.scheduled_for <= now and e.status in (
+        DoseStatus.TAKEN, DoseStatus.LATE, DoseStatus.MISSED, DoseStatus.UNKNOWN)]
     upcoming = [e.scheduled_for for e in events
                 if e.status == DoseStatus.PENDING and e.scheduled_for > now]
     return S.Reminder(
@@ -136,7 +139,7 @@ def patient_item(s: Session, p: Patient) -> S.PatientListItem:
     return S.PatientListItem(
         id=p.id, name=p.name, phone=p.phone, doctor_name=p.doctor_name, language=p.language,
         is_synthetic=p.is_synthetic, telegram_linked=p.telegram_chat_id is not None,
-        next_appointment_at=p.next_appointment_at, last_message_at=last_msg,
+        messages_stopped=p.messages_stopped, next_appointment_at=p.next_appointment_at, last_message_at=last_msg,
         active_reminders=active, adherence=summary(s, p.id), open_flags=flag_counts(s, p.id),
         next_dose=next_dose(s, p.id), created_at=p.created_at,
     )
@@ -220,7 +223,7 @@ def adherence_report(s: Session, patient_id: int, days: int) -> S.AdherenceRepor
         names[m.id] = m.name
         daily[to_local(e.scheduled_for).date()][str(e.status)] += 1
     return S.AdherenceReport(
-        overall=summary(s, patient_id),
+        overall=_med_summary([e for e, _ in rows]),  # same `days` window as the breakdown
         by_medication=[S.MedicationAdherence(reminder_id=mid, medication=names[mid],
                                              adherence=_med_summary(evs))
                        for mid, evs in by_med.items()],
